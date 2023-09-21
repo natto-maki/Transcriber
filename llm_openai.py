@@ -124,13 +124,6 @@ class QualifyOptions:
     model_for_step2: str = default_model_name
 
 
-_qualify_p0_system_ja = '''\
-次の文章は会議中の会話を機械的に書き起こしたものです。
-この文章を訂正し、会議の会話として意味のある内容のみ抽出してください。
-そのために、書き起こし誤りと推測される箇所を修正し、フィラーや言い直しを除去してください。
-入力される文章の各行は発言者の名前の後に ":" が続き、さらに発言内容が続きます。出力も同じ書式を維持してください。
-人名が日本語表記ではない場合、人名は原表記を維持してください。'''
-
 _qualify_p0_template_no_embeddings = '''\
 The following %(source_language_descriptor)s text is a mechanical transcription of a conversation during a meeting.
 Please correct this sentence and extract only what makes sense as a meeting conversation.
@@ -145,19 +138,6 @@ Each line of input text is the speaker's name followed by ":" and then the conte
 Output should maintain the same format.
 %(output_language_descriptor)s'''
 
-_qualify_p1_system_ja = '''\
-次の文章は会議中の会話を書き起こした議事録です。
-この議事録から、要約とアクションアイテムを抽出してください。
-要約には固有名詞もしくは議論内容のみ含めることとし、一般知識や既知の事柄で情報を補わないでください。
-アクションアイテムには議事の中で参加者から明示的な言及があったもののみ含めることとし、推測は含めないでください。
-要約は "point:" に続けて1件のみ出力し、アクションアイテムは "action item:" を行頭に付加してください。
-例えば以下のような形式です。
-point: 要点の例。文章にしてください。
-action item: アクションアイテムの例
-action item: アクションアイテムは複数になることもあります。
-人名が日本語表記ではない場合、人名は原表記を維持してください。
-出力すべき情報が特にない場合や要約に必要な情報が足りない場合は、"none" とだけ出力してください。'''
-
 _qualify_p1_template = '''\
 The following text is the transcribed minutes of a conversation during a meeting.
 From this transcript, please extract a summary and action items.
@@ -170,20 +150,6 @@ For example, the format is as follows:
 %(output_example_descriptor)s
 If there is no particular information to be output, or if there is not enough information for the summary,
 just output "none".'''
-
-_qualify_p2_system_ja = '''\
-次の文章は会議中の会話を機械的に書き起こしたものです。
-この議事録から、要約とアクションアイテムを抽出してください。
-入力される文章に含まれる発音が近い単語への書き起こし誤りは訂正し、フィラーや言い直しは無視してください。
-要約には固有名詞もしくは議論内容のみ含めることとし、一般知識や既知の事柄で情報を補わないでください。
-アクションアイテムには議事の中で参加者から明示的な言及があったもののみ含めることとし、推測は含めないでください。
-要約は "point:" に続けて1件のみ出力し、アクションアイテムは "action item:" を行頭に付加してください。
-例えば以下のような形式です。
-point: 要点の例。文章にしてください。
-action item: アクションアイテムの例
-action item: アクションアイテムは複数になることもあります。
-人名が日本語表記ではない場合、人名は原表記を維持してください。
-出力すべき情報が特にない場合や要約に必要な情報が足りない場合は、"none" とだけ出力してください。'''
 
 _qualify_p2_template = '''\
 The following %(source_language_descriptor)s text is a mechanical transcription of a conversation during a meeting.
