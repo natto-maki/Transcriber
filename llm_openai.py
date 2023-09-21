@@ -11,7 +11,7 @@ import i18n
 
 import main_types as t
 
-default_model_name = "gpt-4-0613"
+default_model_name = "gpt-3.5-turbo-0613"
 
 implied_tokens_per_request = 3
 
