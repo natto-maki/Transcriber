@@ -7,11 +7,10 @@ import json
 
 import openai
 import tiktoken
+# noinspection PyPackageRequirements
 import i18n
 
 import main_types as t
-
-default_model_name = "gpt-3.5-turbo-0613"
 
 implied_tokens_per_request = 3
 
@@ -120,8 +119,8 @@ def _invoke_with_retry(messages, model_name: str, post_process=None):
 class QualifyOptions:
     input_language: str = "ja"
     output_language: str = "ja"
-    model_for_step1: str = default_model_name
-    model_for_step2: str = default_model_name
+    model_for_step1: str = "gpt-3.5-turbo-0613"
+    model_for_step2: str = "gpt-4-0613"
 
 
 _qualify_p0_template_no_embeddings = '''\
@@ -145,7 +144,7 @@ The summary should include only proper nouns or the content of the discussion,
 and should not be supplemented with general knowledge or known facts.
 Action items should only include items explicitly mentioned by participants in the agenda, 
 and should not include speculation.
-Only one summary should be printed following the "point:" and the action item should be prefixed with "action item:".
+Only one summary should be printed following the "Summary:" and the action item should be prefixed with "Action item:".
 For example, the format is as follows:
 %(output_example_descriptor)s
 If there is no particular information to be output, or if there is not enough information for the summary,
@@ -160,7 +159,7 @@ The summary should include only proper nouns or the content of the discussion,
 and should not be supplemented with general knowledge or known facts.
 Action items should only include items explicitly mentioned by participants in the agenda, 
 and should not include speculation.
-Only one summary should be printed following the "point:" and the action item should be prefixed with "action item:".
+Only one summary should be printed following the "Summary:" and the action item should be prefixed with "Action item:".
 For example, the format is as follows:
 %(output_example_descriptor)s
 If there is no particular information to be output, or if there is not enough information for the summary,
@@ -191,16 +190,16 @@ _output_language_descriptor_for_p0 = {
 
 _output_example_descriptor_for_p1 = {
     "en":
-        "point: An example of a main point. Please use sentence form, not a list of words.\n"
-        "action item: An example of an action item.\n"
-        "action item: There can be more than one action item.\n"
+        "Summary: An example of summary. Please use sentence form, not a list of words.\n"
+        "Action item: An example of an action item.\n"
+        "Action item: There can be more than one action item.\n"
         "The words after \":\" should be written in English. "
         "However, names of non-English spelling should not be converted to English, "
         "but should be retained in their original spelling.",
     "ja":
-        "point: 要点の例。文章にしてください。\n"
-        "action item: アクションアイテムの例\n"
-        "action item: アクションアイテムは複数になることもあります。\n"
+        "Summary: 要点の例。文章にしてください。\n"
+        "Action item: アクションアイテムの例\n"
+        "Action item: アクションアイテムは複数になることもあります。\n"
         "\":\" 以降は日本語にしてください。ただし、日本語表記ではない人名は日本語に変換せず、原表記を維持してください。",
 }
 
@@ -280,12 +279,12 @@ def _summarize_sub(sentences: list[t.Sentence] | str, model_name: str, prompt: s
     ]
 
     def _post_process(r0_):
-        r1_ = re.findall(r"point: (.+)\n*", r0_)
+        r1_ = re.findall(r"[Ss]ummary: (.+)\n*", r0_)
         if r1_ is None or len(r1_) != 1:
             return False, None
-        r1_[0] = "(なし)" if r1_[0] == "none" else r1_[0]
-        r2_ = re.findall(r"action item: (.+)\n*", r0_)
-        r2_ = [] if r2_ is None else list(filter(lambda e_: e_ != "none", r2_))
+        r1_[0] = "(なし)" if r1_[0] == "none" or r1_[0] == "None" else r1_[0]
+        r2_ = re.findall(r"[Aa]ction item: (.+)\n*", r0_)
+        r2_ = [] if r2_ is None else list(filter(lambda e_: e_ != "none" and e_ != "None", r2_))
         return True, (r1_, r2_)
 
     r1, r2 = _invoke_with_retry(messages, model_name, _post_process)
