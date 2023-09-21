@@ -278,13 +278,16 @@ def _summarize_sub(sentences: list[t.Sentence] | str, model_name: str, prompt: s
         {"role": "user", "content": text}
     ]
 
+    def _is_none(v_):
+        return re.search(r"[Nn]one\.?", v_) is not None
+
     def _post_process(r0_):
         r1_ = re.findall(r"[Ss]ummary: (.+)\n*", r0_)
         if r1_ is None or len(r1_) != 1:
             return False, None
-        r1_[0] = "(なし)" if r1_[0] == "none" or r1_[0] == "None" else r1_[0]
+        r1_[0] = "(なし)" if _is_none(r1_[0]) else r1_[0]
         r2_ = re.findall(r"[Aa]ction item: (.+)\n*", r0_)
-        r2_ = [] if r2_ is None else list(filter(lambda e_: e_ != "none" and e_ != "None", r2_))
+        r2_ = [] if r2_ is None else list(filter(lambda e_: not _is_none(e_), r2_))
         return True, (r1_, r2_)
 
     r1, r2 = _invoke_with_retry(messages, model_name, _post_process)
