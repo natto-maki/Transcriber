@@ -1,0 +1,19 @@
+// python3 -m grpc_tools.protoc -I./protos --python_out=. --pyi_out=. --grpc_python_out=. ./protos/transcriber_service.proto
+
+syntax = "proto3";
+
+service TranscriberService {
+    rpc Transcribe(TranscribeRequest) returns (TranscribeResponse) {}
+}
+
+message TranscribeRequest {
+    bytes audio_data = 1;
+    string language = 2;
+    string get_embedding = 3;
+    float min_segment_duration = 4;
+}
+
+message TranscribeResponse {
+    string segments = 1;
+    repeated bytes embeddings = 2;
+}

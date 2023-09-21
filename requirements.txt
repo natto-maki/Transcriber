@@ -1,0 +1,20 @@
+# pip3 install -r requirements.txt
+
+sounddevice == 0.4.6
+soundfile == 0.12.1
+numpy == 1.25.2
+scikit-learn == 1.3.0
+onnxruntime == 1.15.1
+faster-whisper == 0.7.1
+grpcio == 1.57.0
+grpcio-tools == 1.57.0
+speechbrain == 0.5.15
+torch==2.0.1
+numba==0.58.0.rc1
+https://github.com/pyannote/pyannote-audio/archive/refs/heads/develop.zip
+openai == 0.27.9
+tiktoken == 0.4.0
+gradio == 3.41.2
+i18nice == 0.9.1
+matplotlib == 3.7.2
+japanize-matplotlib == 1.1.3
