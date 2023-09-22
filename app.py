@@ -268,32 +268,45 @@ def _playback_audio(files):
     _playback_audio_executor.submit(_playback_audio_task, files)
 
 
+def _get_valid_audio_files(s: t.Sentence) -> list[str] | None:
+    if s.prop is None or s.prop.audio_file_name_list is None:
+        return None
+    ret = [name for name in s.prop.audio_file_name_list if os.path.isfile(name)]
+    return ret if len(ret) != 0 else None
+
+
+def _has_sentence_specific_properties(s: t.Sentence):
+    return s.embedding is not None or _get_valid_audio_files(s) is not None
+
+
 def _output_sentences(sentences: list[t.Sentence], show_timestamp=False):
-    if len([None for s in sentences if s.embedding is not None]) == 0:
+    if len([None for s in sentences if _has_sentence_specific_properties(s)]) == 0:
         return html.escape(" ".join([s.text for s in sentences]))
 
+    has_embedding = (len([None for s in sentences if s.embedding is not None]) != 0)
     out = []
-    for i, s in enumerate(_merge_sentences(sentences)):
-        s_person_name = html.escape(s.person_name) if s.person_id != -1 else t.unknown_person_display_name
-
+    for s in _merge_sentences(sentences):
         s_audio_file = None
-        if s.prop is not None and s.prop.audio_file_name_list is not None:
-            valid_files = [name for name in s.prop.audio_file_name_list if os.path.isfile(name)]
-            if len(valid_files) != 0:
-                s_audio_file = _playback_audio_file_template % {"audio_file_names": ",".join(valid_files)}
+        valid_files = _get_valid_audio_files(s)
+        if valid_files is not None:
+            s_audio_file = _playback_audio_file_template % {"audio_file_names": ",".join(valid_files)}
 
         out.append("<tr><td>" if s_audio_file is not None else "<tr><td colspan=\"2\">")
+
+        s_talker = None
+        if has_embedding:
+            s_talker = "<span class=\"talker\">%s</span>" % (
+                html.escape(s.person_name) if s.person_id != -1 else t.unknown_person_display_name)
         if show_timestamp:
             s_tm = time.localtime(s.tm0)
             s_prop = _output_properties(s.prop) if s.prop is not None else ""
             out.append(
-                "<span class=\"talker\">%s</span>  "
-                "<span class=\"talkerExtra\">%02d:%02d.%02d%s</span><br/>%s" %
-                (s_person_name, s_tm.tm_hour, s_tm.tm_min, s_tm.tm_sec, s_prop, html.escape(s.text)))
+                "%s<span class=\"talkerExtra\">%02d:%02d.%02d%s</span><br/>%s" % (
+                    s_talker + "  " if s_talker is not None else "", s_tm.tm_hour, s_tm.tm_min, s_tm.tm_sec, s_prop,
+                    html.escape(s.text)))
         else:
-            out.append(
-                "<span class=\"talker\">%s</span><br/>%s" %
-                (s_person_name, html.escape(s.text)))
+            out.append("%s%s" % (s_talker + "<br/>" if s_talker is not None else "", html.escape(s.text)))
+
         out.append("</td>")
         if s_audio_file is not None:
             out.append("<td class=\"control\" width=\"32px\">%s</td>" % s_audio_file)
