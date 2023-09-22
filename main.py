@@ -37,6 +37,7 @@ import main_types as t
 import emb_db as db
 import llm_openai as llm
 import transcriber_plugin as pl
+import transcriber_hack
 
 
 # workaround for an error on x86 Mac
@@ -654,13 +655,15 @@ class VoiceActivityDetector(MultithreadContextManagerImpl):
 
 
 class Transcriber(MultithreadContextManagerImpl):
-    def __init__(self, stream, device="cpu", language="ja",
+    def __init__(self, stream, device="cpu", language="ja", auto_detect_language=True,
                  embedding_type=None, min_duration=2.0, min_segment_duration=1.0,
                  save_audio_dir=None, **kwargs):
 
         super().__init__(**kwargs)
         self.__device = device
         self.__language = language
+        self.__current_language = language
+        self.__auto_detect_language = auto_detect_language
         self.__embedding_type = embedding_type
         self.__min_duration_in_samples = int(min_duration * sampling_rate)
         self.__min_segment_duration = min_segment_duration
@@ -670,6 +673,8 @@ class Transcriber(MultithreadContextManagerImpl):
         self.__embedding_model = SharedModel()
         self.__channel = None
         self.__stub = None
+
+        self.__detected_languages = deque()
 
         self._stream = stream.add_callback(self.__sentence_callback)
 
@@ -715,9 +720,45 @@ class Transcriber(MultithreadContextManagerImpl):
 
         tm0 = time.time_ns()
 
+        if self.__auto_detect_language:
+            if self.__channel is None:
+                with self.__model:
+                    self.__detected_languages.append(
+                        (transcriber_hack.detect_language(self.__model.ref(), audio_data), len(audio_data)))
+            else:
+                try:
+                    response = self.__stub.DetectLanguage(transcriber_service_pb2.DetectLanguageRequest(
+                        audio_data=audio_data.tobytes()))
+                    languages = json.loads(response.detected_languages)
+                except Exception as ex:
+                    languages = {}
+                    logging.error("Transcriber: exception raised", exc_info=ex)
+
+                if len(languages) != 0:
+                    self.__detected_languages.append((languages, len(audio_data)))
+
+            while (len(self.__detected_languages) > 5 or
+                   (len(self.__detected_languages) > 2 and
+                    sum([duration for _, duration in self.__detected_languages]) > sampling_rate * 30)):
+                self.__detected_languages.popleft()
+
+            languages = {}
+            for prob_table, duration in self.__detected_languages:
+                for language, prob in prob_table:
+                    e = languages.setdefault(language, [0.0, 0])
+                    e[0] += duration * prob
+                    e[1] += duration
+            if len(languages) != 0:
+                language, e = max(languages.items(), key=lambda e_: e_[1][0] / e_[1][1])
+                if e[0] / e[1] > 0.9:
+                    self.__current_language = language
+                else:
+                    self.__current_language = self.__language
+                # logging.info("language detected: %s(%f) -> %s" % (language, e[0] / e[1], self.__current_language))
+
         if self.__channel is None:
             with self.__model:
-                segments, _ = self.__model.ref().transcribe(audio_data, beam_size=5, language=self.__language)
+                segments, _ = self.__model.ref().transcribe(audio_data, beam_size=5, language=self.__current_language)
             segments_j = [[s.start, s.end, s.text] for s in segments
                           if s.end - s.start >= self.__min_segment_duration]
 
@@ -742,7 +783,7 @@ class Transcriber(MultithreadContextManagerImpl):
             response = None
             try:
                 response = self.__stub.Transcribe(transcriber_service_pb2.TranscribeRequest(
-                    audio_data=audio_data.tobytes(), language=self.__language,
+                    audio_data=audio_data.tobytes(), language=self.__current_language,
                     get_embedding=self.__embedding_type if self.__embedding_type is not None else "",
                     min_segment_duration=self.__min_segment_duration))
                 segments_j = json.loads(response.segments)
