@@ -30,6 +30,7 @@ import transcriber_plugin as pl
 class UiConfiguration:
     language: str = "auto"
     show_input_status: bool = False
+    show_statement_properties: bool = False
     openai_api_key: str = ""
 
 
@@ -268,32 +269,45 @@ def _playback_audio(files):
     _playback_audio_executor.submit(_playback_audio_task, files)
 
 
-def _output_sentences(sentences: list[t.Sentence], show_timestamp=False):
-    if len([None for s in sentences if s.embedding is not None]) == 0:
+def _get_valid_audio_files(s: t.Sentence) -> list[str] | None:
+    if s.prop is None or s.prop.audio_file_name_list is None:
+        return None
+    ret = [name for name in s.prop.audio_file_name_list if os.path.isfile(name)]
+    return ret if len(ret) != 0 else None
+
+
+def _has_sentence_specific_properties(s: t.Sentence):
+    return s.embedding is not None or _get_valid_audio_files(s) is not None
+
+
+def _output_sentences(sentences: list[t.Sentence], show_properties=False):
+    if len([None for s in sentences if _has_sentence_specific_properties(s)]) == 0:
         return html.escape(" ".join([s.text for s in sentences]))
 
+    has_embedding = (len([None for s in sentences if s.embedding is not None]) != 0)
     out = []
-    for i, s in enumerate(_merge_sentences(sentences)):
-        s_person_name = html.escape(s.person_name) if s.person_id != -1 else t.unknown_person_display_name
-
+    for s in _merge_sentences(sentences):
         s_audio_file = None
-        if s.prop is not None and s.prop.audio_file_name_list is not None:
-            valid_files = [name for name in s.prop.audio_file_name_list if os.path.isfile(name)]
-            if len(valid_files) != 0:
-                s_audio_file = _playback_audio_file_template % {"audio_file_names": ",".join(valid_files)}
+        valid_files = _get_valid_audio_files(s)
+        if valid_files is not None:
+            s_audio_file = _playback_audio_file_template % {"audio_file_names": ",".join(valid_files)}
 
         out.append("<tr><td>" if s_audio_file is not None else "<tr><td colspan=\"2\">")
-        if show_timestamp:
+
+        s_talker = None
+        if has_embedding:
+            s_talker = "<span class=\"talker\">%s</span>" % (
+                html.escape(s.person_name) if s.person_id != -1 else t.unknown_person_display_name)
+        if show_properties:
             s_tm = time.localtime(s.tm0)
             s_prop = _output_properties(s.prop) if s.prop is not None else ""
             out.append(
-                "<span class=\"talker\">%s</span>  "
-                "<span class=\"talkerExtra\">%02d:%02d.%02d%s</span><br/>%s" %
-                (s_person_name, s_tm.tm_hour, s_tm.tm_min, s_tm.tm_sec, s_prop, html.escape(s.text)))
+                "%s<span class=\"talkerExtra\">%02d:%02d.%02d%s</span><br/>%s" % (
+                    s_talker + "  " if s_talker is not None else "", s_tm.tm_hour, s_tm.tm_min, s_tm.tm_sec, s_prop,
+                    html.escape(s.text)))
         else:
-            out.append(
-                "<span class=\"talker\">%s</span><br/>%s" %
-                (s_person_name, html.escape(s.text)))
+            out.append("%s%s" % (s_talker + "<br/>" if s_talker is not None else "", html.escape(s.text)))
+
         out.append("</td>")
         if s_audio_file is not None:
             out.append("<td class=\"control\" width=\"32px\">%s</td>" % s_audio_file)
@@ -325,9 +339,11 @@ def _output_text(reader, include_anker=False):
         if g.qualified is None:
             if g.state == t.SENTENCE_QUALIFY_ERROR:
                 text += "<td><span class=\"error\">%s</span></td>" % i18n.t("app.text_error_in_qualifying")
-                text += "<td><small>%s</small></td>" % _output_sentences(g.sentences)
+                text += "<td><small>%s</small></td>" % _output_sentences(
+                    g.sentences, show_properties=_ui_conf.show_statement_properties)
             else:
-                text += "<td colspan=\"2\">%s</td>" % _output_sentences(g.sentences)
+                text += "<td colspan=\"2\">%s</td>" % _output_sentences(
+                    g.sentences, show_properties=_ui_conf.show_statement_properties)
 
         else:
             if g.state == t.SENTENCE_QUALIFY_ERROR:
@@ -344,7 +360,7 @@ def _output_text(reader, include_anker=False):
                 text += "<td>...</td>"
 
             text += "<td><small>%s</small></td>" % _output_sentences(
-                g.qualified.corrected_sentences, show_timestamp=False)
+                g.qualified.corrected_sentences, show_properties=_ui_conf.show_statement_properties)
 
         text += "</tr>"
 
@@ -523,7 +539,7 @@ def _pre_apply_configuration():
 
 def _apply_configuration(
         f_conf_enable_plugins, f_conf_input_language, f_conf_output_language,
-        f_conf_ui_language, f_conf_ui_show_input_status,
+        f_conf_ui_language, f_conf_ui_show_input_status, f_conf_ui_show_statement_properties,
         f_conf_input_devices, f_conf_device,
         f_conf_vad_threshold, f_conf_vad_pre_hold, f_conf_vad_post_hold, f_conf_vad_post_apply,
         f_conf_vad_soft_limit_length, f_conf_vad_hard_limit_length,
@@ -543,6 +559,7 @@ def _apply_configuration(
     ui_conf: UiConfiguration = dataclasses.replace(_ui_conf)
     ui_conf.language = f_conf_ui_language
     ui_conf.show_input_status = f_conf_ui_show_input_status
+    ui_conf.show_statement_properties = f_conf_ui_show_statement_properties
     ui_conf.openai_api_key = f_conf_openai_api_key
 
     conf = main.Configuration()
@@ -705,6 +722,9 @@ def app_main(args=None):
                 f_conf_ui_show_input_status = gr.Checkbox(
                     label=i18n.t('app.conf_ui_show_input_status'),
                     value=_ui_conf.show_input_status)
+                f_conf_ui_show_statement_properties = gr.Checkbox(
+                    label=i18n.t('app.conf_ui_show_statement_properties'),
+                    value=_ui_conf.show_statement_properties)
                 f_conf_device = gr.Dropdown(
                     label=i18n.t('app.conf_device'),
                     multiselect=False, allow_custom_value=True,
@@ -826,7 +846,7 @@ def app_main(args=None):
             _erase_person, [f_person_selector], [f_person_selector, f_person_list])
         f_conf_apply.click(_pre_apply_configuration, None, [f_conf_apply]).then(_apply_configuration, [
             f_conf_enable_plugins, f_conf_input_language, f_conf_output_language,
-            f_conf_ui_language, f_conf_ui_show_input_status,
+            f_conf_ui_language, f_conf_ui_show_input_status, f_conf_ui_show_statement_properties,
             f_conf_input_devices, f_conf_device,
             f_conf_vad_threshold, f_conf_vad_pre_hold, f_conf_vad_post_hold, f_conf_vad_post_apply,
             f_conf_vad_soft_limit_length, f_conf_vad_hard_limit_length,

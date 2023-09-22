@@ -30,6 +30,7 @@ ja:
   conf_output_language: "出力する言語"
   conf_ui_language: "UI言語(適用にはアプリケーションの再起動が必要)"
   conf_ui_show_input_status: "入力音声の計測結果を表示"
+  conf_ui_show_statement_properties: "会話文に認識時の計測結果を表示"
   conf_input_devices: "入力デバイス: 何も選んでいない場合は自動選択"
   conf_device: "認識処理を実行するデバイス(通信経由の場合は \"アドレス:ポート\" を指定)"
   conf_vad_group: "VAD(有音検出)の設定"

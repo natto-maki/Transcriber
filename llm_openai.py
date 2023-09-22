@@ -7,11 +7,10 @@ import json
 
 import openai
 import tiktoken
+# noinspection PyPackageRequirements
 import i18n
 
 import main_types as t
-
-default_model_name = "gpt-4-0613"
 
 implied_tokens_per_request = 3
 
@@ -120,16 +119,9 @@ def _invoke_with_retry(messages, model_name: str, post_process=None):
 class QualifyOptions:
     input_language: str = "ja"
     output_language: str = "ja"
-    model_for_step1: str = default_model_name
-    model_for_step2: str = default_model_name
+    model_for_step1: str = "gpt-3.5-turbo-0613"
+    model_for_step2: str = "gpt-4-0613"
 
-
-_qualify_p0_system_ja = '''\
-次の文章は会議中の会話を機械的に書き起こしたものです。
-この文章を訂正し、会議の会話として意味のある内容のみ抽出してください。
-そのために、書き起こし誤りと推測される箇所を修正し、フィラーや言い直しを除去してください。
-入力される文章の各行は発言者の名前の後に ":" が続き、さらに発言内容が続きます。出力も同じ書式を維持してください。
-人名が日本語表記ではない場合、人名は原表記を維持してください。'''
 
 _qualify_p0_template_no_embeddings = '''\
 The following %(source_language_descriptor)s text is a mechanical transcription of a conversation during a meeting.
@@ -145,19 +137,6 @@ Each line of input text is the speaker's name followed by ":" and then the conte
 Output should maintain the same format.
 %(output_language_descriptor)s'''
 
-_qualify_p1_system_ja = '''\
-次の文章は会議中の会話を書き起こした議事録です。
-この議事録から、要約とアクションアイテムを抽出してください。
-要約には固有名詞もしくは議論内容のみ含めることとし、一般知識や既知の事柄で情報を補わないでください。
-アクションアイテムには議事の中で参加者から明示的な言及があったもののみ含めることとし、推測は含めないでください。
-要約は "point:" に続けて1件のみ出力し、アクションアイテムは "action item:" を行頭に付加してください。
-例えば以下のような形式です。
-point: 要点の例。文章にしてください。
-action item: アクションアイテムの例
-action item: アクションアイテムは複数になることもあります。
-人名が日本語表記ではない場合、人名は原表記を維持してください。
-出力すべき情報が特にない場合や要約に必要な情報が足りない場合は、"none" とだけ出力してください。'''
-
 _qualify_p1_template = '''\
 The following text is the transcribed minutes of a conversation during a meeting.
 From this transcript, please extract a summary and action items.
@@ -165,25 +144,11 @@ The summary should include only proper nouns or the content of the discussion,
 and should not be supplemented with general knowledge or known facts.
 Action items should only include items explicitly mentioned by participants in the agenda, 
 and should not include speculation.
-Only one summary should be printed following the "point:" and the action item should be prefixed with "action item:".
+Only one summary should be printed following the "Summary:" and the action item should be prefixed with "Action item:".
 For example, the format is as follows:
 %(output_example_descriptor)s
 If there is no particular information to be output, or if there is not enough information for the summary,
 just output "none".'''
-
-_qualify_p2_system_ja = '''\
-次の文章は会議中の会話を機械的に書き起こしたものです。
-この議事録から、要約とアクションアイテムを抽出してください。
-入力される文章に含まれる発音が近い単語への書き起こし誤りは訂正し、フィラーや言い直しは無視してください。
-要約には固有名詞もしくは議論内容のみ含めることとし、一般知識や既知の事柄で情報を補わないでください。
-アクションアイテムには議事の中で参加者から明示的な言及があったもののみ含めることとし、推測は含めないでください。
-要約は "point:" に続けて1件のみ出力し、アクションアイテムは "action item:" を行頭に付加してください。
-例えば以下のような形式です。
-point: 要点の例。文章にしてください。
-action item: アクションアイテムの例
-action item: アクションアイテムは複数になることもあります。
-人名が日本語表記ではない場合、人名は原表記を維持してください。
-出力すべき情報が特にない場合や要約に必要な情報が足りない場合は、"none" とだけ出力してください。'''
 
 _qualify_p2_template = '''\
 The following %(source_language_descriptor)s text is a mechanical transcription of a conversation during a meeting.
@@ -194,7 +159,7 @@ The summary should include only proper nouns or the content of the discussion,
 and should not be supplemented with general knowledge or known facts.
 Action items should only include items explicitly mentioned by participants in the agenda, 
 and should not include speculation.
-Only one summary should be printed following the "point:" and the action item should be prefixed with "action item:".
+Only one summary should be printed following the "Summary:" and the action item should be prefixed with "Action item:".
 For example, the format is as follows:
 %(output_example_descriptor)s
 If there is no particular information to be output, or if there is not enough information for the summary,
@@ -225,16 +190,16 @@ _output_language_descriptor_for_p0 = {
 
 _output_example_descriptor_for_p1 = {
     "en":
-        "point: An example of a main point. Please use sentence form, not a list of words.\n"
-        "action item: An example of an action item.\n"
-        "action item: There can be more than one action item.\n"
+        "Summary: An example of summary. Please use sentence form, not a list of words.\n"
+        "Action item: An example of an action item.\n"
+        "Action item: There can be more than one action item.\n"
         "The words after \":\" should be written in English. "
         "However, names of non-English spelling should not be converted to English, "
         "but should be retained in their original spelling.",
     "ja":
-        "point: 要点の例。文章にしてください。\n"
-        "action item: アクションアイテムの例\n"
-        "action item: アクションアイテムは複数になることもあります。\n"
+        "Summary: 要点の例。文章にしてください。\n"
+        "Action item: アクションアイテムの例\n"
+        "Action item: アクションアイテムは複数になることもあります。\n"
         "\":\" 以降は日本語にしてください。ただし、日本語表記ではない人名は日本語に変換せず、原表記を維持してください。",
 }
 
@@ -313,13 +278,16 @@ def _summarize_sub(sentences: list[t.Sentence] | str, model_name: str, prompt: s
         {"role": "user", "content": text}
     ]
 
+    def _is_none(v_):
+        return re.search(r"[Nn]one\.?", v_) is not None
+
     def _post_process(r0_):
-        r1_ = re.findall(r"point: (.+)\n*", r0_)
+        r1_ = re.findall(r"[Ss]ummary: (.+)\n*", r0_)
         if r1_ is None or len(r1_) != 1:
             return False, None
-        r1_[0] = "(なし)" if r1_[0] == "none" else r1_[0]
-        r2_ = re.findall(r"action item: (.+)\n*", r0_)
-        r2_ = [] if r2_ is None else list(filter(lambda e_: e_ != "none", r2_))
+        r1_[0] = "(なし)" if _is_none(r1_[0]) else r1_[0]
+        r2_ = re.findall(r"[Aa]ction item: (.+)\n*", r0_)
+        r2_ = [] if r2_ is None else list(filter(lambda e_: not _is_none(e_), r2_))
         return True, (r1_, r2_)
 
     r1, r2 = _invoke_with_retry(messages, model_name, _post_process)

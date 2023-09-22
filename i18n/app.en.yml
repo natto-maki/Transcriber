@@ -30,6 +30,7 @@ en:
   conf_output_language: "Language of output"
   conf_ui_language: "UI language (requires application reboot to apply)"
   conf_ui_show_input_status: "Show measurement results of input audio"
+  conf_ui_show_statement_properties: "Show measurement results on the generated sentences"
   conf_input_devices: "Input device: If nothing is selected, a device will be automatically selected"
   conf_device: "Device to perform the recognition process (\"address:port\" for using a remote server)"
   conf_vad_group: "Settings for VAD (Voice Activity Detector)"
