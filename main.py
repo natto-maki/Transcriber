@@ -896,7 +896,7 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
     """
     def __init__(self, stream, backend, file_name=None, soft_limit=180.0, hard_limit=300.0, silent_interval=20.0,
                  merge_interval=10.0, merge_threshold=0.3, llm_opt: llm.QualifyOptions | None = None,
-                 auto_sync=True, **kwargs):
+                 auto_sync=True, enable_simultaneous_interpretation=True, **kwargs):  # TODO param
 
         super().__init__(**kwargs)
         self.__backend = backend
@@ -909,6 +909,7 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
         self.__llm_opt = dataclasses.replace(llm_opt) if llm_opt is not None else llm.QualifyOptions()
         self.__default_input_language = self.__llm_opt.input_language
         self.__auto_sync = auto_sync
+        self.__enable_simultaneous_interpretation = enable_simultaneous_interpretation
 
         self.__lock0 = th.Lock()
         self.__lock1 = th.Lock()
@@ -917,6 +918,7 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
 
         self.__freeze_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         self.__callback_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        self.__interpretation_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
         tools.recover_file(self.__file_name)
         if os.path.isfile(self.__file_name):
@@ -959,6 +961,44 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
         gr.state = t.SENTENCE_QUALIFYING
         self.__freeze_executor.submit(self.__freeze, gr_index, gr)
 
+    def __interpret(self, gr_index: int, s: t.Sentence):
+        with self.__lock0:
+            if len(s.si_state.waiting) == 0:
+                return
+            in_language = s.prop.language if s.prop is not None and s.prop.language != "" else None
+            in_text = " ".join(s.si_state.processed_org + s.si_state.waiting)
+            s.si_state.processing = " ".join(s.si_state.waiting)
+            s.si_state.waiting.clear()
+
+        out_text = llm.low_latency_interpretation(in_language, self.__llm_opt.output_language, in_text)
+
+        with self.__lock0:
+            s.si_state.processed_org.append(s.si_state.processing)
+            s.si_state.processed_int = out_text
+            s.si_state.processing = ""
+
+        self.__callback_executor.submit(self.__delayed_callback, gr_index)
+
+    def __initiate_interpret_on_sentence_created(self, gr_index: int, s: t.Sentence):
+        assert self.__lock0.locked()
+        if not self.__enable_simultaneous_interpretation:
+            return
+        if s.sentence_type != t.SentenceType.Sentence:
+            return
+        if s.prop is None or s.prop.language == "" or s.prop.language == self.__llm_opt.output_language:
+            return
+        s.si_state = t.SimultaneousInterpretationState(processed_org=[], waiting=[s.text])
+        self.__interpretation_executor.submit(self.__interpret, gr_index, s)
+
+    def __initiate_interpret_on_merged(self, gr_index: int, s: t.Sentence, s_add: t.Sentence):
+        assert self.__lock0.locked()
+        if not self.__enable_simultaneous_interpretation:
+            return
+        if s.si_state is None:
+            return
+        s.si_state.waiting.append(s_add.text)
+        self.__interpretation_executor.submit(self.__interpret, gr_index, s)
+
     def _request_handler(self, received_time: float, s: t.Sentence):
         _ = received_time
 
@@ -991,10 +1031,13 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
                 if s0.embedding is not None and s0.tm1 + self.__merge_interval > s.tm0 and \
                         self.__backend.metrics(s0.embedding, s.embedding) < self.__merge_threshold:
                     s0.merge(s)
+                    self.__initiate_interpret_on_merged(gr_index, s0, s)
                     merged = True
 
             if not merged:
-                gr.sentences.append(s.clone())
+                s0 = s.clone()
+                gr.sentences.append(s0)
+                self.__initiate_interpret_on_sentence_created(gr_index, s0)
 
         self.__callback_executor.submit(self.__delayed_callback, gr_index)
 

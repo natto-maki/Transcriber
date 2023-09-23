@@ -36,10 +36,22 @@ class AdditionalProperties:
 
 
 @dataclasses.dataclass
+class SimultaneousInterpretationState:
+    processed_org: list[str] | None = None
+    processed_int: str = ""
+    processing: str = ""
+    waiting: list[str] | None = None
+
+    def clone(self):
+        return dataclasses.replace(self)
+
+
+@dataclasses.dataclass
 class Sentence:
     tm0: float
     tm1: float
     text: str
+    si_state: SimultaneousInterpretationState | None = None
 
     sentence_type: SentenceType = SentenceType.Sentence
     payload: dict | None = None
@@ -53,6 +65,8 @@ class Sentence:
 
     def clone(self):
         r = dataclasses.replace(self)
+        if self.si_state is not None:
+            r.si_state = self.si_state.clone()
         if self.prop is not None:
             r.prop = self.prop.clone()
         return r

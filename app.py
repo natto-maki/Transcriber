@@ -132,6 +132,12 @@ span.status {
 span.suppressed {
   color: #808080 !important;
 }
+span.processing {
+  color: #C0C0C0 !important;
+}
+span.interpretation {
+  color: #80FF80 !important;
+}
 img.playback_audio_base {
   width: 24px;
   height: 24px;
@@ -215,11 +221,12 @@ person_list_table_footer = '''\
 def _merge_sentences(sentences: list[t.Sentence], merge_interval=10.0):
     ret: list[t.Sentence] = []
     for s in sentences:
-        if s.person_id != -1 and len(ret) != 0 and ret[-1].person_id == s.person_id and \
-                ret[-1].tm1 + merge_interval > s.tm0:
-            ret[-1].merge(s)
-        else:
-            ret.append(s.clone())
+        if s.person_id != -1 and s.si_state is None and len(ret) != 0:
+            s0 = ret[-1]
+            if s0.person_id == s.person_id and s0.si_state is None and s0.tm1 + merge_interval > s.tm0:
+                s0.merge(s)
+                continue
+        ret.append(s.clone())
     return ret
 
 
@@ -293,10 +300,23 @@ def _output_sentences(sentences: list[t.Sentence], show_properties=False):
         if s.sentence_type == t.SentenceType.LanguageDetected:
             s_td_class = " class=\"sys_language_detected\""
 
-        s_talker = None
+        s_talker = ""
         if has_embedding:
             s_talker = "<span class=\"talker\">%s</span>" % (
                 html.escape(s.person_name) if s.person_id != -1 else t.unknown_person_display_name)
+
+        if s.si_state is None:
+            s_rendered_text = html.escape(s.text)
+        else:
+            s_text = " ".join(s.si_state.processed_org)
+            s_processing = " ".join([text for text in [s.si_state.processing] + s.si_state.waiting if text != ""])
+            s_interpretation = s.si_state.processed_int
+            s_rendered_text = "%s%s%s" % (
+                html.escape(s_text),
+                " <span class=\"processing\">" + html.escape(s_processing) + "</span>"
+                if s_processing != "" else "",
+                "<br/><span class=\"interpretation\">" + html.escape(s_interpretation) + "</span>"
+                if s_interpretation != "" else "")
 
         out.append(("<tr><td%s>" if s_audio_file is not None else "<tr><td%s colspan=\"2\">") % s_td_class)
 
@@ -308,10 +328,10 @@ def _output_sentences(sentences: list[t.Sentence], show_properties=False):
             s_prop = _output_properties(s.prop) if s.prop is not None else ""
             out.append(
                 "%s<span class=\"talkerExtra\">%02d:%02d.%02d%s</span><br/>%s" % (
-                    s_talker + "  " if s_talker is not None else "", s_tm.tm_hour, s_tm.tm_min, s_tm.tm_sec, s_prop,
-                    html.escape(s.text)))
+                    s_talker + "  " if s_talker != "" else "", s_tm.tm_hour, s_tm.tm_min, s_tm.tm_sec, s_prop,
+                    s_rendered_text))
         else:
-            out.append("%s%s" % (s_talker + "<br/>" if s_talker is not None else "", html.escape(s.text)))
+            out.append("%s%s" % (s_talker + "<br/>" if s_talker != "" else "", s_rendered_text))
 
         out.append("</td>")
         if s_audio_file is not None:
@@ -865,7 +885,7 @@ def app_main(args=None):
             f_conf_qualify_llm_model_name_step1, f_conf_qualify_llm_model_name_step2,
             *f_conf_args], [f_conf_apply])
 
-        demo.load(_interval_update, None, [f_text], every=2)
+        demo.load(_interval_update, None, [f_text], every=1)
 
     demo.queue().launch(server_name="0.0.0.0")  # TODO network opts
 

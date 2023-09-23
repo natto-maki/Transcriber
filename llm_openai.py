@@ -336,3 +336,30 @@ def qualify(
         summaries=summaries,
         action_items=action_items
     )
+
+
+_interpret_p0_template = {
+    "en": {
+        "default": "Please translate it into clean English.",
+        "ja": "Please translate it into clean English. Input text is in Japanese."
+    },
+    "ja": {
+        "default": "Please translate it into clean Japanese.",
+        "en": "Please translate it into clean Japanese. Input text is in English."
+    }
+}
+
+
+def low_latency_interpretation(in_language: str | None, out_language: str, text: str) -> str:
+    if out_language not in _interpret_p0_template:
+        return ""
+    prompt_src_keyed = _interpret_p0_template[out_language]
+    prompt = prompt_src_keyed[in_language if in_language in prompt_src_keyed else "default"]
+    try:
+        return _invoke([
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": text}
+        ], "gpt-3.5-turbo-0613")
+    except Exception as ex:
+        _ = ex
+        return ""
