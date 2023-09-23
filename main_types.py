@@ -18,7 +18,6 @@ class AdditionalProperties:
     vad_max_level: float = 0.0
     audio_level: float = 0.0
     segment_audio_level: float = 0.0
-    audio_file_name: str | None = None  # TODO remove
     audio_file_name_list: list[str] | None = None
     language: str = ""
 
@@ -31,8 +30,6 @@ class AdditionalProperties:
     def append_audio_file(self, audio_file_name: str | None):
         if audio_file_name is None:
             return
-        if self.audio_file_name is None:
-            self.audio_file_name = audio_file_name
         if self.audio_file_name_list is None:
             self.audio_file_name_list = []
         self.audio_file_name_list.append(audio_file_name)
