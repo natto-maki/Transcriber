@@ -1,8 +1,14 @@
 import dataclasses
+import enum
 import numpy as np
 
 unknown_person_name = "unknown"
 unknown_person_display_name = "???"
+
+
+class SentenceType(enum.Enum):
+    Sentence = 0
+    LanguageDetected = 1  # old_language, new_language
 
 
 @dataclasses.dataclass
@@ -12,8 +18,9 @@ class AdditionalProperties:
     vad_max_level: float = 0.0
     audio_level: float = 0.0
     segment_audio_level: float = 0.0
-    audio_file_name: str | None = None
+    audio_file_name: str | None = None  # TODO remove
     audio_file_name_list: list[str] | None = None
+    language: str = ""
 
     def clone(self):
         r = dataclasses.replace(self)
@@ -36,9 +43,15 @@ class Sentence:
     tm0: float
     tm1: float
     text: str
+
+    sentence_type: SentenceType = SentenceType.Sentence
+    payload: dict | None = None
+
+    # note: If sentence_type is other than Sentence, these fields have always initial values
     embedding: np.ndarray | None = None
     person_id: int = -1
     person_name: str = unknown_person_name
+
     prop: AdditionalProperties | None = None
 
     def clone(self):
@@ -46,6 +59,15 @@ class Sentence:
         if self.prop is not None:
             r.prop = self.prop.clone()
         return r
+
+    def merge(self, s):
+        self.text += " " + s.text
+        self.tm1 = s.tm1
+        if s.prop is not None and s.prop.audio_file_name_list is not None:
+            if self.prop is None:
+                self.prop = AdditionalProperties()
+            for name in s.prop.audio_file_name_list:
+                self.prop.append_audio_file(name)
 
 
 @dataclasses.dataclass

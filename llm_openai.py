@@ -229,11 +229,21 @@ def _get_name(s: t.Sentence):
     return s.person_name if s.person_id != -1 else t.unknown_person_name
 
 
+def _aggregate_sentences_no_embeddings(sentences: list[t.Sentence]):
+    return " ".join([s.text for s in sentences if s.sentence_type == t.SentenceType.Sentence])
+
+
+def _aggregate_sentences_with_embeddings(sentences: list[t.Sentence]):
+    return "\n".join([
+        _get_name(s) + ": " + s.text.replace("\n", "\n  ")
+        for s in sentences if s.sentence_type == t.SentenceType.Sentence])
+
+
 def _correct_sentences_no_embeddings(sentences: list[t.Sentence], model_name: str, opt: QualifyOptions) -> str:
-    if len(sentences) == 0:
+    text = _aggregate_sentences_no_embeddings(sentences)
+    if len(text) == 0:
         return ""
 
-    text = " ".join([s.text for s in sentences])
     messages = [
         {"role": "system", "content": _qualify_p0_system(opt, with_embeddings=False)},
         {"role": "user", "content": text}
@@ -245,10 +255,10 @@ def _correct_sentences_no_embeddings(sentences: list[t.Sentence], model_name: st
 def _correct_sentences_with_embeddings(
         sentences: list[t.Sentence], model_name: str, opt: QualifyOptions) -> list[t.Sentence]:
 
-    if len(sentences) == 0:
+    text = _aggregate_sentences_with_embeddings(sentences)
+    if len(text) == 0:
         return []
 
-    text = "\n".join([_get_name(s) + ": " + s.text.replace("\n", "\n  ") for s in sentences])
     messages = [
         {"role": "system", "content": _qualify_p0_system(opt, with_embeddings=True)},
         {"role": "user", "content": text}
@@ -268,11 +278,10 @@ def _correct_sentences_with_embeddings(
 
 
 def _summarize_sub(sentences: list[t.Sentence] | str, model_name: str, prompt: str) -> tuple[str, list[str]]:
-    if len(sentences) == 0:
+    text = _aggregate_sentences_with_embeddings(sentences) if isinstance(sentences, list) else sentences
+    if len(text) == 0:
         return "", []
 
-    text = "\n".join([_get_name(s) + ": " + s.text.replace("\n", "\n  ") for s in sentences]) \
-        if isinstance(sentences, list) else sentences
     messages = [
         {"role": "system", "content": prompt},
         {"role": "user", "content": text}

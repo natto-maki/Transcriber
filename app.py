@@ -113,6 +113,9 @@ table.sentences tr td.control {
   padding: 2px 0px !important;
   text-align: right !important;
 }
+td.sys_language_detected {
+  background-color: rgba(128,255,128,.3);
+}
 span.talker {
   color: #808080 !important;
   font-weight: bold;
@@ -214,14 +217,7 @@ def _merge_sentences(sentences: list[t.Sentence], merge_interval=10.0):
     for s in sentences:
         if s.person_id != -1 and len(ret) != 0 and ret[-1].person_id == s.person_id and \
                 ret[-1].tm1 + merge_interval > s.tm0:
-            s0 = ret[-1]
-            s0.text += " " + s.text
-            s0.tm1 = s.tm1
-            if s.prop is not None and s.prop.audio_file_name_list is not None:
-                if s0.prop is None:
-                    s0.prop = t.AdditionalProperties()
-                for name in s.prop.audio_file_name_list:
-                    s0.prop.append_audio_file(name)
+            ret[-1].merge(s)
         else:
             ret.append(s.clone())
     return ret
@@ -281,6 +277,7 @@ def _has_sentence_specific_properties(s: t.Sentence):
 
 
 def _output_sentences(sentences: list[t.Sentence], show_properties=False):
+    # TODO Split in this case as well (create another version of merge_sentences
     if len([None for s in sentences if _has_sentence_specific_properties(s)]) == 0:
         return html.escape(" ".join([s.text for s in sentences]))
 
@@ -292,13 +289,21 @@ def _output_sentences(sentences: list[t.Sentence], show_properties=False):
         if valid_files is not None:
             s_audio_file = _playback_audio_file_template % {"audio_file_names": ",".join(valid_files)}
 
-        out.append("<tr><td>" if s_audio_file is not None else "<tr><td colspan=\"2\">")
+        s_td_class = ""
+        if s.sentence_type == t.SentenceType.LanguageDetected:
+            s_td_class = " class=\"sys_language_detected\""
 
         s_talker = None
         if has_embedding:
             s_talker = "<span class=\"talker\">%s</span>" % (
                 html.escape(s.person_name) if s.person_id != -1 else t.unknown_person_display_name)
-        if show_properties:
+
+        out.append(("<tr><td%s>" if s_audio_file is not None else "<tr><td%s colspan=\"2\">") % s_td_class)
+
+        if s.sentence_type == t.SentenceType.LanguageDetected:
+            # TODO test
+            out.append("Language detected: %s to %s" % (s.payload["old_language"], s.payload["new_language"]))
+        elif show_properties:
             s_tm = time.localtime(s.tm0)
             s_prop = _output_properties(s.prop) if s.prop is not None else ""
             out.append(
