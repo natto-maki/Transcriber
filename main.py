@@ -795,9 +795,14 @@ class Transcriber(MultithreadContextManagerImpl):
             if self.__embedding_type == "speechbrain":
                 for i, s in enumerate(segments_j):
                     audio_tensor = torch.from_numpy(audio_data[int(s[0] * sampling_rate):int(s[1] * sampling_rate)])
-                    with self.__embedding_model:
-                        embeddings[i] = (self.__embedding_model.ref().encode_batch(audio_tensor)
-                                         .cpu().detach().numpy().flatten())
+                    try:
+                        with self.__embedding_model:
+                            embeddings[i] = (self.__embedding_model.ref().encode_batch(audio_tensor)
+                                             .cpu().detach().numpy().flatten())
+                    except Exception as ex:
+                        embeddings[i] = None
+                        logging.error("Transcriber: exception raised", exc_info=ex)
+
             elif self.__embedding_type == "pyannote":
                 for i, s in enumerate(segments_j):
                     # Seems to accept ndarray and Tensor, but cannot confirm working properly → go through .wav
@@ -805,8 +810,12 @@ class Transcriber(MultithreadContextManagerImpl):
                             "tmp.wav", mode="w",
                             samplerate=sampling_rate, channels=1, subtype="FLOAT") as f:
                         f.write(audio_data[int(s[0] * sampling_rate):int(s[1] * sampling_rate)])
-                    with self.__embedding_model:
-                        embeddings[i] = self.__embedding_model.ref()("tmp.wav").flatten().astype(np.float32)
+                    try:
+                        with self.__embedding_model:
+                            embeddings[i] = self.__embedding_model.ref()("tmp.wav").flatten().astype(np.float32)
+                    except Exception as ex:
+                        embeddings[i] = None
+                        logging.error("Transcriber: exception raised", exc_info=ex)
 
         else:
             response = None
