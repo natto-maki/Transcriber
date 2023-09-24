@@ -21,6 +21,7 @@ def _merge_str(target: str, value: str):
 class SentenceType(enum.Enum):
     Sentence = 0
     LanguageDetected = 1  # old_language, new_language
+    SentenceSeparator = 2
 
 
 @dataclasses.dataclass

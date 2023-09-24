@@ -388,6 +388,9 @@ def _output_sentences(sentences: list[t.Sentence], show_properties=False):
     has_embedding = (len([None for s in sentences if s.embedding is not None]) != 0)
     out = []
     for s in (_merge_sentences(sentences) if has_embedding else _merge_sentences_with_no_embeddings(sentences)):
+        if s.sentence_type == t.SentenceType.SentenceSeparator:
+            continue
+
         s_audio_file = None
         if not _has_inline_playback(s):
             valid_files = _get_valid_audio_files(s)

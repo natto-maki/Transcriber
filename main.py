@@ -896,7 +896,8 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
     """
     def __init__(self, stream, backend, file_name=None, soft_limit=180.0, hard_limit=300.0, silent_interval=20.0,
                  merge_interval=10.0, merge_threshold=0.3, llm_opt: llm.QualifyOptions | None = None,
-                 auto_sync=True, enable_simultaneous_interpretation=True, **kwargs):  # TODO param
+                 auto_sync=True, enable_simultaneous_interpretation=True,
+                 separator_interval_on_interpretation_enabled=30.0, **kwargs):  # TODO param
 
         super().__init__(**kwargs)
         self.__backend = backend
@@ -910,6 +911,7 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
         self.__default_input_language = self.__llm_opt.input_language
         self.__auto_sync = auto_sync
         self.__enable_simultaneous_interpretation = enable_simultaneous_interpretation
+        self.__separator_interval_on_interpretation_enabled = separator_interval_on_interpretation_enabled
 
         self.__lock0 = th.Lock()
         self.__lock1 = th.Lock()
@@ -990,14 +992,15 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
         s.si_state = t.SimultaneousInterpretationState(processed_org=[], waiting=[s.text])
         self.__interpretation_executor.submit(self.__interpret, gr_index, s)
 
-    def __initiate_interpret_on_merged(self, gr_index: int, s: t.Sentence, s_add: t.Sentence):
+    def __initiate_interpret_on_merged(self, gr_index: int, s: t.Sentence, s_add: t.Sentence) -> bool:
         assert self.__lock0.locked()
         if not self.__enable_simultaneous_interpretation:
-            return
+            return False
         if s.si_state is None:
-            return
+            return False
         s.si_state.waiting.append(s_add.text)
         self.__interpretation_executor.submit(self.__interpret, gr_index, s)
+        return 0.0 < self.__separator_interval_on_interpretation_enabled < s.tm1 - s.tm0
 
     def _request_handler(self, received_time: float, s: t.Sentence):
         _ = received_time
@@ -1031,7 +1034,9 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
                 if s0.embedding is not None and s0.tm1 + self.__merge_interval > s.tm0 and \
                         self.__backend.metrics(s0.embedding, s.embedding) < self.__merge_threshold:
                     s0.merge(s)
-                    self.__initiate_interpret_on_merged(gr_index, s0, s)
+                    if self.__initiate_interpret_on_merged(gr_index, s0, s):
+                        gr.sentences.append(t.Sentence(
+                            s0.tm1, s0.tm1, "", sentence_type=t.SentenceType.SentenceSeparator))
                     merged = True
 
             if not merged:
