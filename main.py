@@ -897,7 +897,7 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
     def __init__(self, stream, backend, file_name=None, soft_limit=180.0, hard_limit=300.0, silent_interval=20.0,
                  merge_interval=10.0, merge_threshold=0.3, llm_opt: llm.QualifyOptions | None = None,
                  auto_sync=True, enable_simultaneous_interpretation=True,
-                 separator_interval_on_interpretation_enabled=30.0, **kwargs):  # TODO param
+                 separator_interval_on_interpretation_enabled=30.0, **kwargs):
 
         super().__init__(**kwargs)
         self.__backend = backend
@@ -1141,6 +1141,8 @@ class Configuration:
     input_devices: list[str] | None = None
     device: str = "cpu"  # "cpu" "gpu" or access point
     language: str = "ja"  # copied to llm_opt.input_language
+    enable_auto_detect_language: bool = True
+    enable_simultaneous_interpretation: bool = False
 
     vad_threshold: float = 0.5
     vad_pre_hold: float = 0.05
@@ -1253,7 +1255,8 @@ class Application:
         self.__save_audio_dir = os.path.join(data_dir_name, "audio")
         os.makedirs(self.__save_audio_dir, exist_ok=True)
         self.__transcriber = Transcriber(
-            self.__vad, device=self.__conf.device, language=self.__conf.language,  # TODO autodetect
+            self.__vad, device=self.__conf.device, language=self.__conf.language,
+            auto_detect_language=self.__conf.enable_auto_detect_language,
             embedding_type=self.__conf.embedding_type,
             min_duration=self.__conf.transcribe_min_duration,
             min_segment_duration=self.__conf.transcribe_min_segment_duration,
@@ -1274,7 +1277,8 @@ class Application:
             soft_limit=self.__conf.qualify_soft_limit, hard_limit=self.__conf.qualify_hard_limit,
             silent_interval=self.__conf.qualify_silent_interval,
             merge_interval=self.__conf.qualify_merge_interval, merge_threshold=self.__conf.qualify_merge_threshold,
-            llm_opt=self.__conf.llm_opt)
+            llm_opt=self.__conf.llm_opt,
+            enable_simultaneous_interpretation=self.__conf.enable_simultaneous_interpretation)
 
         self.__sync_stop: th.Semaphore | None = None
         self.__sync_thread = None

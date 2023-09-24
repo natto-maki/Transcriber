@@ -28,6 +28,8 @@ ja:
   conf_apply: "設定を適用"
   conf_enable_plugins: "プラグインを有効にする(適用にはアプリケーションの再起動が必要)"
   conf_input_language: "入力音声の言語"
+  conf_enable_auto_detect_language: "入力音声の言語を自動で推定する"
+  conf_enable_simultaneous_interpretation: "入力言語と出力言語が異なる場合、リアルタイム翻訳を有効にする"
   conf_output_language: "出力する言語"
   conf_ui_language: "UI言語(適用にはアプリケーションの再起動が必要)"
   conf_ui_show_input_status: "入力音声の計測結果を表示"
