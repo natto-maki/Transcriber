@@ -24,3 +24,15 @@ class TranscribeResponse(_message.Message):
     segments: str
     embeddings: _containers.RepeatedScalarFieldContainer[bytes]
     def __init__(self, segments: _Optional[str] = ..., embeddings: _Optional[_Iterable[bytes]] = ...) -> None: ...
+
+class DetectLanguageRequest(_message.Message):
+    __slots__ = ["audio_data"]
+    AUDIO_DATA_FIELD_NUMBER: _ClassVar[int]
+    audio_data: bytes
+    def __init__(self, audio_data: _Optional[bytes] = ...) -> None: ...
+
+class DetectLanguageResponse(_message.Message):
+    __slots__ = ["detected_languages"]
+    DETECTED_LANGUAGES_FIELD_NUMBER: _ClassVar[int]
+    detected_languages: str
+    def __init__(self, detected_languages: _Optional[str] = ...) -> None: ...

@@ -37,6 +37,7 @@ import main_types as t
 import emb_db as db
 import llm_openai as llm
 import transcriber_plugin as pl
+import transcriber_hack
 
 
 # workaround for an error on x86 Mac
@@ -654,13 +655,19 @@ class VoiceActivityDetector(MultithreadContextManagerImpl):
 
 
 class Transcriber(MultithreadContextManagerImpl):
-    def __init__(self, stream, device="cpu", language="ja",
+    def __init__(self, stream, device="cpu", language="ja", auto_detect_language=True,
+                 auto_detect_upper_threshold=0.9, auto_detect_lower_threshold=0.9,
+                 auto_detect_guard_period=4,
                  embedding_type=None, min_duration=2.0, min_segment_duration=1.0,
                  save_audio_dir=None, **kwargs):
 
         super().__init__(**kwargs)
         self.__device = device
         self.__language = language
+        self.__auto_detect_language = auto_detect_language
+        self.__auto_detect_upper_threshold = auto_detect_upper_threshold
+        self.__auto_detect_lower_threshold = auto_detect_lower_threshold
+        self.__auto_detect_guard_period = auto_detect_guard_period
         self.__embedding_type = embedding_type
         self.__min_duration_in_samples = int(min_duration * sampling_rate)
         self.__min_segment_duration = min_segment_duration
@@ -670,6 +677,10 @@ class Transcriber(MultithreadContextManagerImpl):
         self.__embedding_model = SharedModel()
         self.__channel = None
         self.__stub = None
+
+        self.__current_language = self.__language
+        self.__detected_languages = deque()
+        self.__guard_period = self.__auto_detect_guard_period
 
         self._stream = stream.add_callback(self.__sentence_callback)
 
@@ -700,6 +711,58 @@ class Transcriber(MultithreadContextManagerImpl):
         else:
             raise ValueError()
 
+    def __update_language(self, audio_data: np.ndarray) -> str:
+        if len(audio_data) > sampling_rate * 30:
+            audio_data = audio_data[:sampling_rate * 30]
+
+        if self.__channel is None:
+            with self.__model:
+                self.__detected_languages.append(
+                    (transcriber_hack.detect_language(self.__model.ref(), audio_data), len(audio_data)))
+        else:
+            try:
+                response = self.__stub.DetectLanguage(transcriber_service_pb2.DetectLanguageRequest(
+                    audio_data=audio_data.tobytes()))
+                languages = json.loads(response.detected_languages)
+            except Exception as ex:
+                languages = {}
+                logging.error("Transcriber: exception raised", exc_info=ex)
+
+            if len(languages) != 0:
+                self.__detected_languages.append((languages, len(audio_data)))
+
+        while (len(self.__detected_languages) > 8 or
+               (len(self.__detected_languages) > 2 and
+                sum([duration for _, duration in self.__detected_languages]) > sampling_rate * 90)):
+            self.__detected_languages.popleft()
+
+        if self.__guard_period > 0:
+            self.__guard_period -= 1
+            return self.__current_language
+
+        languages = {}
+        for prob_table, duration in self.__detected_languages:
+            for language, prob in prob_table:
+                e = languages.setdefault(language, [0.0, 0])
+                e[0] += duration * prob
+                e[1] += duration
+
+        if len(languages) == 0:
+            return self.__current_language
+
+        top_language, e = max(languages.items(), key=lambda e_: e_[1][0] / e_[1][1])
+        top_ratio = e[0] / e[1]
+
+        old_language = self.__current_language
+        self.__current_language = (
+            top_language if top_ratio > self.__auto_detect_upper_threshold else
+            self.__language if top_ratio < self.__auto_detect_lower_threshold else
+            self.__current_language)
+        if old_language != self.__current_language:
+            self.__guard_period = self.__auto_detect_guard_period
+
+        return old_language
+
     def _request_handler(
             self, timestamp: float, raw_audio_data: np.ndarray | None, prop: t.AdditionalProperties | None):
 
@@ -715,9 +778,16 @@ class Transcriber(MultithreadContextManagerImpl):
 
         tm0 = time.time_ns()
 
+        if self.__auto_detect_language:
+            old_language = self.__update_language(audio_data)
+            if self.__current_language != old_language:
+                self._invoke_callback(t.Sentence(
+                    timestamp, timestamp, "", sentence_type=t.SentenceType.LanguageDetected, payload={
+                        "old_language": old_language, "new_language": self.__current_language}))
+
         if self.__channel is None:
             with self.__model:
-                segments, _ = self.__model.ref().transcribe(audio_data, beam_size=5, language=self.__language)
+                segments, _ = self.__model.ref().transcribe(audio_data, beam_size=5, language=self.__current_language)
             segments_j = [[s.start, s.end, s.text] for s in segments
                           if s.end - s.start >= self.__min_segment_duration]
 
@@ -742,7 +812,7 @@ class Transcriber(MultithreadContextManagerImpl):
             response = None
             try:
                 response = self.__stub.Transcribe(transcriber_service_pb2.TranscribeRequest(
-                    audio_data=audio_data.tobytes(), language=self.__language,
+                    audio_data=audio_data.tobytes(), language=self.__current_language,
                     get_embedding=self.__embedding_type if self.__embedding_type is not None else "",
                     min_segment_duration=self.__min_segment_duration))
                 segments_j = json.loads(response.segments)
@@ -778,10 +848,11 @@ class Transcriber(MultithreadContextManagerImpl):
                 s_prop = dataclasses.replace(prop)
                 s_prop.segment_audio_level = max(
                     np.sqrt(np.average(np.square(segment_audio_data))), sys.float_info.epsilon)
-                s_prop.append_audio_file(audio_file_name)
+                s_prop.language = self.__current_language
 
                 self._invoke_callback(t.Sentence(
-                    timestamp + s[0], timestamp + s[1], s[2], embedding=embeddings[i], prop=s_prop))
+                    timestamp + s[0], timestamp + s[1], "", embedding=embeddings[i], prop=s_prop).add_text(
+                    s[2], audio_file_name))
 
     def __sentence_callback(
             self, timestamp: float, audio_data: np.ndarray | None, prop: t.AdditionalProperties | None):
@@ -825,7 +896,8 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
     """
     def __init__(self, stream, backend, file_name=None, soft_limit=180.0, hard_limit=300.0, silent_interval=20.0,
                  merge_interval=10.0, merge_threshold=0.3, llm_opt: llm.QualifyOptions | None = None,
-                 auto_sync=True, **kwargs):
+                 auto_sync=True, enable_simultaneous_interpretation=True,
+                 separator_interval_on_interpretation_enabled=30.0, **kwargs):  # TODO param
 
         super().__init__(**kwargs)
         self.__backend = backend
@@ -835,8 +907,11 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
         self.__silent_interval = silent_interval
         self.__merge_interval = merge_interval
         self.__merge_threshold = merge_threshold
-        self.__llm_opt = llm_opt if llm_opt is not None else llm.QualifyOptions()
+        self.__llm_opt = dataclasses.replace(llm_opt) if llm_opt is not None else llm.QualifyOptions()
+        self.__default_input_language = self.__llm_opt.input_language
         self.__auto_sync = auto_sync
+        self.__enable_simultaneous_interpretation = enable_simultaneous_interpretation
+        self.__separator_interval_on_interpretation_enabled = separator_interval_on_interpretation_enabled
 
         self.__lock0 = th.Lock()
         self.__lock1 = th.Lock()
@@ -845,6 +920,7 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
 
         self.__freeze_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         self.__callback_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        self.__interpretation_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
         tools.recover_file(self.__file_name)
         if os.path.isfile(self.__file_name):
@@ -860,6 +936,13 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
             self.sync()
 
     def __freeze(self, gr_index: int, gr: t.SentenceGroup):
+        language_count = {}
+        for s in gr.sentences:
+            if s.prop is not None and s.prop.language != "":
+                language_count.setdefault(s.prop.language, [0])[0] += 1
+        self.__llm_opt.input_language = max(language_count.items(), key=lambda e_: e_[1][0])[0] \
+            if len(language_count) != 0 else self.__default_input_language
+
         try:
             qualified = llm.qualify(gr.sentences, opt=self.__llm_opt)
             with self.__lock0:
@@ -879,6 +962,45 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
         gr = self.__history[gr_index]
         gr.state = t.SENTENCE_QUALIFYING
         self.__freeze_executor.submit(self.__freeze, gr_index, gr)
+
+    def __interpret(self, gr_index: int, s: t.Sentence):
+        with self.__lock0:
+            if len(s.si_state.waiting) == 0:
+                return
+            in_language = s.prop.language if s.prop is not None and s.prop.language != "" else None
+            in_text = " ".join(s.si_state.processed_org + s.si_state.waiting)
+            s.si_state.processing = " ".join(s.si_state.waiting)
+            s.si_state.waiting.clear()
+
+        out_text = llm.low_latency_interpretation(in_language, self.__llm_opt.output_language, in_text)
+
+        with self.__lock0:
+            s.si_state.processed_org.append(s.si_state.processing)
+            s.si_state.processed_int = out_text
+            s.si_state.processing = ""
+
+        self.__callback_executor.submit(self.__delayed_callback, gr_index)
+
+    def __initiate_interpret_on_sentence_created(self, gr_index: int, s: t.Sentence):
+        assert self.__lock0.locked()
+        if not self.__enable_simultaneous_interpretation:
+            return
+        if s.sentence_type != t.SentenceType.Sentence:
+            return
+        if s.prop is None or s.prop.language == "" or s.prop.language == self.__llm_opt.output_language:
+            return
+        s.si_state = t.SimultaneousInterpretationState(processed_org=[], waiting=[s.text])
+        self.__interpretation_executor.submit(self.__interpret, gr_index, s)
+
+    def __initiate_interpret_on_merged(self, gr_index: int, s: t.Sentence, s_add: t.Sentence) -> bool:
+        assert self.__lock0.locked()
+        if not self.__enable_simultaneous_interpretation:
+            return False
+        if s.si_state is None:
+            return False
+        s.si_state.waiting.append(s_add.text)
+        self.__interpretation_executor.submit(self.__interpret, gr_index, s)
+        return 0.0 < self.__separator_interval_on_interpretation_enabled < s.tm1 - s.tm0
 
     def _request_handler(self, received_time: float, s: t.Sentence):
         _ = received_time
@@ -911,16 +1033,16 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
                 s0 = gr.sentences[-1]
                 if s0.embedding is not None and s0.tm1 + self.__merge_interval > s.tm0 and \
                         self.__backend.metrics(s0.embedding, s.embedding) < self.__merge_threshold:
-                    s0.text += " " + s.text
-                    s0.tm1 = s.tm1
-                    if s.prop is not None and s.prop.audio_file_name is not None:
-                        if s0.prop is None:
-                            s0.prop = t.AdditionalProperties()
-                        s0.prop.append_audio_file(s.prop.audio_file_name)
+                    s0.merge(s)
+                    if self.__initiate_interpret_on_merged(gr_index, s0, s):
+                        gr.sentences.append(t.Sentence(
+                            s0.tm1, s0.tm1, "", sentence_type=t.SentenceType.SentenceSeparator))
                     merged = True
 
             if not merged:
-                gr.sentences.append(s.clone())
+                s0 = s.clone()
+                gr.sentences.append(s0)
+                self.__initiate_interpret_on_sentence_created(gr_index, s0)
 
         self.__callback_executor.submit(self.__delayed_callback, gr_index)
 
@@ -1131,7 +1253,7 @@ class Application:
         self.__save_audio_dir = os.path.join(data_dir_name, "audio")
         os.makedirs(self.__save_audio_dir, exist_ok=True)
         self.__transcriber = Transcriber(
-            self.__vad, device=self.__conf.device, language=self.__conf.language,
+            self.__vad, device=self.__conf.device, language=self.__conf.language,  # TODO autodetect
             embedding_type=self.__conf.embedding_type,
             min_duration=self.__conf.transcribe_min_duration,
             min_segment_duration=self.__conf.transcribe_min_segment_duration,

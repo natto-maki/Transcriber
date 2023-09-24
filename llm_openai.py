@@ -4,6 +4,8 @@ import urllib.error
 import time
 import re
 import json
+import threading as th
+import concurrent.futures
 
 import openai
 import tiktoken
@@ -229,11 +231,21 @@ def _get_name(s: t.Sentence):
     return s.person_name if s.person_id != -1 else t.unknown_person_name
 
 
+def _aggregate_sentences_no_embeddings(sentences: list[t.Sentence]):
+    return " ".join([s.text for s in sentences if s.sentence_type == t.SentenceType.Sentence])
+
+
+def _aggregate_sentences_with_embeddings(sentences: list[t.Sentence]):
+    return "\n".join([
+        _get_name(s) + ": " + s.text.replace("\n", "\n  ")
+        for s in sentences if s.sentence_type == t.SentenceType.Sentence])
+
+
 def _correct_sentences_no_embeddings(sentences: list[t.Sentence], model_name: str, opt: QualifyOptions) -> str:
-    if len(sentences) == 0:
+    text = _aggregate_sentences_no_embeddings(sentences)
+    if len(text) == 0:
         return ""
 
-    text = " ".join([s.text for s in sentences])
     messages = [
         {"role": "system", "content": _qualify_p0_system(opt, with_embeddings=False)},
         {"role": "user", "content": text}
@@ -245,10 +257,10 @@ def _correct_sentences_no_embeddings(sentences: list[t.Sentence], model_name: st
 def _correct_sentences_with_embeddings(
         sentences: list[t.Sentence], model_name: str, opt: QualifyOptions) -> list[t.Sentence]:
 
-    if len(sentences) == 0:
+    text = _aggregate_sentences_with_embeddings(sentences)
+    if len(text) == 0:
         return []
 
-    text = "\n".join([_get_name(s) + ": " + s.text.replace("\n", "\n  ") for s in sentences])
     messages = [
         {"role": "system", "content": _qualify_p0_system(opt, with_embeddings=True)},
         {"role": "user", "content": text}
@@ -268,23 +280,25 @@ def _correct_sentences_with_embeddings(
 
 
 def _summarize_sub(sentences: list[t.Sentence] | str, model_name: str, prompt: str) -> tuple[str, list[str]]:
-    if len(sentences) == 0:
+    text = _aggregate_sentences_with_embeddings(sentences) if isinstance(sentences, list) else sentences
+    if len(text) == 0:
         return "", []
 
-    text = "\n".join([_get_name(s) + ": " + s.text.replace("\n", "\n  ") for s in sentences]) \
-        if isinstance(sentences, list) else sentences
     messages = [
         {"role": "system", "content": prompt},
         {"role": "user", "content": text}
     ]
 
+    def _is_none(v_):
+        return re.search(r"[Nn]one\.?", v_) is not None
+
     def _post_process(r0_):
         r1_ = re.findall(r"[Ss]ummary: (.+)\n*", r0_)
         if r1_ is None or len(r1_) != 1:
             return False, None
-        r1_[0] = "(なし)" if r1_[0] == "none" or r1_[0] == "None" else r1_[0]
+        r1_[0] = "(なし)" if _is_none(r1_[0]) else r1_[0]
         r2_ = re.findall(r"[Aa]ction item: (.+)\n*", r0_)
-        r2_ = [] if r2_ is None else list(filter(lambda e_: e_ != "none" and e_ != "None", r2_))
+        r2_ = [] if r2_ is None else list(filter(lambda e_: not _is_none(e_), r2_))
         return True, (r1_, r2_)
 
     r1, r2 = _invoke_with_retry(messages, model_name, _post_process)
@@ -324,3 +338,51 @@ def qualify(
         summaries=summaries,
         action_items=action_items
     )
+
+
+_interpret_p0_template = {
+    "en": {
+        "default": "Please translate it into clean English.",
+        "ja": "Please translate it into clean English. Input text is in Japanese."
+    },
+    "ja": {
+        "default": "Please translate it into clean Japanese.",
+        "en": "Please translate it into clean Japanese. Input text is in English."
+    }
+}
+
+_interpretation_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+_interpretation_task_count = th.Semaphore(1)
+
+
+def _low_latency_interpretation_procedure(in_language: str | None, out_language: str, text: str) -> str:
+    try:
+        if out_language not in _interpret_p0_template:
+            return "[unknown]"
+        prompt_src_keyed = _interpret_p0_template[out_language]
+        prompt = prompt_src_keyed[in_language if in_language in prompt_src_keyed else "default"]
+
+        return _invoke([
+            {"role": "system", "content": prompt},
+            {"role": "user", "content": text}
+        ], "gpt-3.5-turbo-0613")
+
+    except Exception as ex:
+        _ = ex
+        return "[error]"
+
+
+def _low_latency_interpretation_caller(ct):
+    _interpretation_task_count.release()
+    ct[1] = _low_latency_interpretation_procedure(*ct[2:])
+    ct[0].release()
+
+
+def low_latency_interpretation(in_language: str | None, out_language: str, text: str) -> str:
+    if not _interpretation_task_count.acquire(blocking=False):
+        return "[skip]"
+    ct = [th.Semaphore(0), None, in_language, out_language, text]
+    _interpretation_executor.submit(_low_latency_interpretation_caller, ct)
+    if ct[0].acquire(timeout=15.0):
+        return ct[1]
+    return "[timeout]"

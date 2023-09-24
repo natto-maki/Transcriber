@@ -19,12 +19,23 @@ class TranscriberServiceStub(object):
                 request_serializer=transcriber__service__pb2.TranscribeRequest.SerializeToString,
                 response_deserializer=transcriber__service__pb2.TranscribeResponse.FromString,
                 )
+        self.DetectLanguage = channel.unary_unary(
+                '/TranscriberService/DetectLanguage',
+                request_serializer=transcriber__service__pb2.DetectLanguageRequest.SerializeToString,
+                response_deserializer=transcriber__service__pb2.DetectLanguageResponse.FromString,
+                )
 
 
 class TranscriberServiceServicer(object):
     """Missing associated documentation comment in .proto file."""
 
     def Transcribe(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def DetectLanguage(self, request, context):
         """Missing associated documentation comment in .proto file."""
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
@@ -37,6 +48,11 @@ def add_TranscriberServiceServicer_to_server(servicer, server):
                     servicer.Transcribe,
                     request_deserializer=transcriber__service__pb2.TranscribeRequest.FromString,
                     response_serializer=transcriber__service__pb2.TranscribeResponse.SerializeToString,
+            ),
+            'DetectLanguage': grpc.unary_unary_rpc_method_handler(
+                    servicer.DetectLanguage,
+                    request_deserializer=transcriber__service__pb2.DetectLanguageRequest.FromString,
+                    response_serializer=transcriber__service__pb2.DetectLanguageResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -62,5 +78,22 @@ class TranscriberService(object):
         return grpc.experimental.unary_unary(request, target, '/TranscriberService/Transcribe',
             transcriber__service__pb2.TranscribeRequest.SerializeToString,
             transcriber__service__pb2.TranscribeResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def DetectLanguage(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/TranscriberService/DetectLanguage',
+            transcriber__service__pb2.DetectLanguageRequest.SerializeToString,
+            transcriber__service__pb2.DetectLanguageResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
