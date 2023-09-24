@@ -1431,9 +1431,11 @@ class Application:
 
     def rename(self, person_id: int, new_name: str):
         self.__db.rename(person_id, new_name)
+        self.__sync()
 
     def erase(self, person_id: int):
         self.__db.erase(person_id)
+        self.__sync()
 
     def plot_db(self, embedding_type: str):
         return self.__db.plot(embedding_type)
