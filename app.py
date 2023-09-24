@@ -997,7 +997,7 @@ if __name__ == '__main__':
     _ui_conf = _load_ui_configuration()
 
     logging.basicConfig(
-        format='%(asctime)s: %(name)s:%(funcName)s:%(lineno)d %(levelname)s: %(message)s', level=logging.INFO)
+        format='%(asctime)s: %(name)s:%(funcName)s:%(lineno)d %(levelname)s: %(message)s', level=logging.WARNING)
     logging.getLogger().handlers[0].addFilter(lambda record: record.name != "httpx")
 
     language_code = _ui_conf.language
