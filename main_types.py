@@ -6,6 +6,16 @@ unknown_person_name = "unknown"
 unknown_person_display_name = "???"
 
 
+def _merge_list(target: list | None, value: list | None):
+    if target is None and value is None:
+        return None
+    return (target if target is not None else []) + (value if value is not None else [])
+
+
+def _merge_str(target: str, value: str):
+    return target + (" " if target != "" else "") + value
+
+
 class SentenceType(enum.Enum):
     Sentence = 0
     LanguageDetected = 1  # old_language, new_language
@@ -28,11 +38,8 @@ class AdditionalProperties:
         return r
 
     def append_audio_file(self, audio_file_name: str | None):
-        if audio_file_name is None:
-            return
-        if self.audio_file_name_list is None:
-            self.audio_file_name_list = []
-        self.audio_file_name_list.append(audio_file_name)
+        if audio_file_name is not None:
+            self.audio_file_name_list = _merge_list(self.audio_file_name_list, [audio_file_name])
 
 
 @dataclasses.dataclass
@@ -43,7 +50,20 @@ class SimultaneousInterpretationState:
     waiting: list[str] | None = None
 
     def clone(self):
-        return dataclasses.replace(self)
+        r = dataclasses.replace(self)
+        if self.processed_org is not None:
+            r.processed_org = [] + self.processed_org
+        if self.waiting is not None:
+            r.waiting = [] + self.waiting
+        return r
+
+    def merge(self, r):
+        # note: If there is sentences awaiting translation in `self` and
+        # sentences already translated in `r`, the order in the display will be swapped.
+        self.processed_org = _merge_list(self.processed_org, r.processed_org)
+        self.processed_int = _merge_str(self.processed_int, r.processed_int)
+        self.processing = _merge_str(self.processing, r.processing)
+        self.waiting = _merge_list(self.waiting, r.waiting)
 
 
 @dataclasses.dataclass
@@ -74,6 +94,10 @@ class Sentence:
     def merge(self, s):
         self.text += " " + s.text
         self.tm1 = s.tm1
+
+        if self.si_state is not None and s.si_state is not None:
+            self.si_state.merge(s.si_state)
+
         if s.prop is not None and s.prop.audio_file_name_list is not None:
             if self.prop is None:
                 self.prop = AdditionalProperties()

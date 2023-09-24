@@ -101,6 +101,7 @@ main.personList {
 }
 table.sentences {
   width: 100%;
+  margin-bottom: 0px !important;
 }
 table.sentences tr {
 }
@@ -113,8 +114,11 @@ table.sentences tr td.control {
   padding: 2px 0px !important;
   text-align: right !important;
 }
-td.sys_language_detected {
-  background-color: rgba(128,255,128,.3);
+table.sentences tr td.sys_language_detected {
+  background-color: var(--primary-500);
+  padding: 2px 6px !important;
+  border-top: 8px solid transparent !important;
+  border-bottom: 8px solid transparent !important;
 }
 span.talker {
   color: #808080 !important;
@@ -133,10 +137,10 @@ span.suppressed {
   color: #808080 !important;
 }
 span.processing {
-  color: #C0C0C0 !important;
+  color: #A0A0A0 !important;
 }
 span.interpretation {
-  color: #80FF80 !important;
+  color: var(--primary-200) !important;
 }
 img.playback_audio_base {
   width: 24px;
@@ -164,8 +168,8 @@ text_table_header = '''\
 <table width="100%%">
 <tr>
 <th width="60px">%(time)s</th>
-<th>%(summary)s</th>
-<th width="40%%">%(conversation)s</th>
+<th width="calc(45%% - 60px)">%(summary)s</th>
+<th width="55%%">%(conversation)s</th>
 </tr>
 '''
 
@@ -188,8 +192,8 @@ history_text_table_header = '''\
 <table width="100%%">
 <tr>
 <th width="60px">%(time)s</th>
-<th width="calc(60%% - 60px)">%(summary)s</th>
-<th width="40%%">%(conversation)s</th>
+<th width="calc(45%% - 60px)">%(summary)s</th>
+<th width="55%%">%(conversation)s</th>
 </tr>
 '''
 
@@ -218,12 +222,34 @@ person_list_table_footer = '''\
 '''
 
 
+def _can_be_merged(s0: t.Sentence, s1: t.Sentence):
+    if s0.person_id == -1 or s0.person_id != s1.person_id:
+        return False
+    if s0.si_state is None and s1.si_state is None:
+        return True
+    if s0.si_state is None or s1.si_state is None:
+        return False
+    return True
+
+
 def _merge_sentences(sentences: list[t.Sentence], merge_interval=10.0):
     ret: list[t.Sentence] = []
     for s in sentences:
-        if s.person_id != -1 and s.si_state is None and len(ret) != 0:
+        if len(ret) != 0:
             s0 = ret[-1]
-            if s0.person_id == s.person_id and s0.si_state is None and s0.tm1 + merge_interval > s.tm0:
+            if s0.tm1 + merge_interval > s.tm0 and _can_be_merged(s0, s):
+                s0.merge(s)
+                continue
+        ret.append(s.clone())
+    return ret
+
+
+def _merge_sentences_with_no_embeddings(sentences: list[t.Sentence], merge_interval=10.0):
+    ret: list[t.Sentence] = []
+    for s in sentences:
+        if s.sentence_type == t.SentenceType.Sentence and len(ret) != 0:
+            s0 = ret[-1]
+            if s0.sentence_type == t.SentenceType.Sentence and s0.tm1 + merge_interval > s.tm0:
                 s0.merge(s)
                 continue
         ret.append(s.clone())
@@ -284,13 +310,9 @@ def _has_sentence_specific_properties(s: t.Sentence):
 
 
 def _output_sentences(sentences: list[t.Sentence], show_properties=False):
-    # TODO Split in this case as well (create another version of merge_sentences
-    if len([None for s in sentences if _has_sentence_specific_properties(s)]) == 0:
-        return html.escape(" ".join([s.text for s in sentences]))
-
     has_embedding = (len([None for s in sentences if s.embedding is not None]) != 0)
     out = []
-    for s in _merge_sentences(sentences):
+    for s in (_merge_sentences(sentences) if has_embedding else _merge_sentences_with_no_embeddings(sentences)):
         s_audio_file = None
         valid_files = _get_valid_audio_files(s)
         if valid_files is not None:
@@ -384,7 +406,8 @@ def _output_text(reader, include_anker=False):
             else:
                 text += "<td>...</td>"
 
-            text += "<td><small>%s</small></td>" % _output_sentences(
+            # "<td><small>%s</small></td>"
+            text += "<td>%s</td>" % _output_sentences(
                 g.qualified.corrected_sentences, show_properties=_ui_conf.show_statement_properties)
 
         text += "</tr>"
