@@ -18,6 +18,8 @@ import numpy as np
 import openai
 import sounddevice as sd
 import soundfile as sf
+# noinspection PyPackageRequirements
+import iso639
 
 import tools
 import main_types as t
@@ -370,6 +372,18 @@ def _render_text(s: t.Sentence, length_limit: int | None = None) -> str:
     return "".join(out)
 
 
+def _get_language_name(code: str) -> str:
+    key = "lang." + code
+    name = i18n.t(key)
+    if name != key:
+        return name
+    try:
+        return iso639.Lang(code).name
+    except Exception as ex:
+        _ = ex
+        return "?Unknown"
+
+
 def _output_sentences(sentences: list[t.Sentence], show_properties=False):
     has_embedding = (len([None for s in sentences if s.embedding is not None]) != 0)
     out = []
@@ -405,8 +419,9 @@ def _output_sentences(sentences: list[t.Sentence], show_properties=False):
         out.append(("<tr><td%s>" if s_audio_file is not None else "<tr><td%s colspan=\"2\">") % s_td_class)
 
         if s.sentence_type == t.SentenceType.LanguageDetected:
-            # TODO test
-            out.append("Language detected: %s to %s" % (s.payload["old_language"], s.payload["new_language"]))
+            out.append(i18n.t('app.text_language_detected') % {
+                "old_language": _get_language_name(s.payload["old_language"]),
+                "new_language": _get_language_name(s.payload["new_language"])})
         elif show_properties:
             s_tm = time.localtime(s.tm0)
             s_prop = _output_properties(s.prop) if s.prop is not None else ""
