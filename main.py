@@ -848,11 +848,11 @@ class Transcriber(MultithreadContextManagerImpl):
                 s_prop = dataclasses.replace(prop)
                 s_prop.segment_audio_level = max(
                     np.sqrt(np.average(np.square(segment_audio_data))), sys.float_info.epsilon)
-                s_prop.append_audio_file(audio_file_name)
                 s_prop.language = self.__current_language
 
                 self._invoke_callback(t.Sentence(
-                    timestamp + s[0], timestamp + s[1], s[2], embedding=embeddings[i], prop=s_prop))
+                    timestamp + s[0], timestamp + s[1], "", embedding=embeddings[i], prop=s_prop).add_text(
+                    s[2], audio_file_name))
 
     def __sentence_callback(
             self, timestamp: float, audio_data: np.ndarray | None, prop: t.AdditionalProperties | None):
