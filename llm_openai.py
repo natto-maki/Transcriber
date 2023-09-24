@@ -4,6 +4,8 @@ import urllib.error
 import time
 import re
 import json
+import threading as th
+import concurrent.futures
 
 import openai
 import tiktoken
@@ -349,17 +351,38 @@ _interpret_p0_template = {
     }
 }
 
+_interpretation_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+_interpretation_task_count = th.Semaphore(1)
 
-def low_latency_interpretation(in_language: str | None, out_language: str, text: str) -> str:
-    if out_language not in _interpret_p0_template:
-        return ""
-    prompt_src_keyed = _interpret_p0_template[out_language]
-    prompt = prompt_src_keyed[in_language if in_language in prompt_src_keyed else "default"]
+
+def _low_latency_interpretation_procedure(in_language: str | None, out_language: str, text: str) -> str:
     try:
+        if out_language not in _interpret_p0_template:
+            return "[unknown]"
+        prompt_src_keyed = _interpret_p0_template[out_language]
+        prompt = prompt_src_keyed[in_language if in_language in prompt_src_keyed else "default"]
+
         return _invoke([
             {"role": "system", "content": prompt},
             {"role": "user", "content": text}
         ], "gpt-3.5-turbo-0613")
+
     except Exception as ex:
         _ = ex
-        return ""
+        return "[error]"
+
+
+def _low_latency_interpretation_caller(ct):
+    _interpretation_task_count.release()
+    ct[1] = _low_latency_interpretation_procedure(*ct[2:])
+    ct[0].release()
+
+
+def low_latency_interpretation(in_language: str | None, out_language: str, text: str) -> str:
+    if not _interpretation_task_count.acquire(blocking=False):
+        return "[skip]"
+    ct = [th.Semaphore(0), None, in_language, out_language, text]
+    _interpretation_executor.submit(_low_latency_interpretation_caller, ct)
+    if ct[0].acquire(timeout=15.0):
+        return ct[1]
+    return "[timeout]"
