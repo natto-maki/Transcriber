@@ -142,6 +142,14 @@ span.processing {
 span.interpretation {
   color: var(--primary-200) !important;
 }
+span.playback_audio {
+}
+span.playback_audio:hover {
+  background: rgba(255,255,255,.4);
+}
+span.playback_audio:active {
+  background: rgba(255,255,255,.8);
+}
 img.playback_audio_base {
   width: 24px;
   height: 24px;
@@ -155,7 +163,7 @@ img.playback_audio_base {
 img.playback_audio {
 }
 img.playback_audio:hover {
-  background: rgba(255,255,255,.2);
+  background: rgba(255,255,255,.4);
 }
 img.playback_audio:active {
   background: rgba(255,255,255,.8);
@@ -265,6 +273,15 @@ _playback_audio_file_template = '''\
   });'>
 '''
 
+_playback_audio_file_template_for_span = '''\
+<span class="playback_audio"
+  onclick='fetch("/api/playback_audio/", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({data: ["%(audio_file_names)s"]})
+  });'>
+'''
+
 
 def _playback_audio_task(files):
     logging.info("_playback_audio_task: %s" % files)
@@ -309,14 +326,59 @@ def _has_sentence_specific_properties(s: t.Sentence):
     return s.embedding is not None or _get_valid_audio_files(s) is not None
 
 
+def _has_inline_playback(s: t.Sentence):
+    return s.prop is not None and \
+        s.prop.audio_file_name_list is not None and len(s.prop.audio_file_name_list) != 0 and \
+        s.prop.audio_file_prop_list is not None and \
+        len(s.prop.audio_file_name_list) == len(s.prop.audio_file_prop_list)
+
+
+def _render_text(s: t.Sentence, length_limit: int | None = None) -> str:
+    if not _has_inline_playback(s):
+        return html.escape(s.text)
+
+    if length_limit is None:
+        length_limit = len(s.text)
+
+    out = []
+    audio_index = 0
+    offset = 0
+    while offset < length_limit and audio_index < len(s.prop.audio_file_prop_list):
+        name = s.prop.audio_file_name_list[audio_index]
+        prop = s.prop.audio_file_prop_list[audio_index]
+        audio_index += 1
+
+        if prop is None:
+            continue
+        if offset < prop.offset:
+            out.append(html.escape(s.text[offset:prop.offset]))
+            offset = prop.offset
+            if offset >= length_limit:
+                break
+
+        is_valid = os.path.isfile(name)
+        if is_valid:
+            out.append(_playback_audio_file_template_for_span % {"audio_file_names": name})
+        offset = prop.offset + prop.length
+        out.append(html.escape(s.text[prop.offset:offset]))
+        if is_valid:
+            out.append("</span>")
+
+    if offset < length_limit:
+        out.append(html.escape(s.text[offset:length_limit]))
+
+    return "".join(out)
+
+
 def _output_sentences(sentences: list[t.Sentence], show_properties=False):
     has_embedding = (len([None for s in sentences if s.embedding is not None]) != 0)
     out = []
     for s in (_merge_sentences(sentences) if has_embedding else _merge_sentences_with_no_embeddings(sentences)):
         s_audio_file = None
-        valid_files = _get_valid_audio_files(s)
-        if valid_files is not None:
-            s_audio_file = _playback_audio_file_template % {"audio_file_names": ",".join(valid_files)}
+        if not _has_inline_playback(s):
+            valid_files = _get_valid_audio_files(s)
+            if valid_files is not None:
+                s_audio_file = _playback_audio_file_template % {"audio_file_names": ",".join(valid_files)}
 
         s_td_class = ""
         if s.sentence_type == t.SentenceType.LanguageDetected:
@@ -328,13 +390,13 @@ def _output_sentences(sentences: list[t.Sentence], show_properties=False):
                 html.escape(s.person_name) if s.person_id != -1 else t.unknown_person_display_name)
 
         if s.si_state is None:
-            s_rendered_text = html.escape(s.text)
+            s_rendered_text = _render_text(s)
         else:
             s_text = " ".join(s.si_state.processed_org)
             s_processing = " ".join([text for text in [s.si_state.processing] + s.si_state.waiting if text != ""])
             s_interpretation = s.si_state.processed_int
             s_rendered_text = "%s%s%s" % (
-                html.escape(s_text),
+                _render_text(s, len(s_text)),
                 " <span class=\"processing\">" + html.escape(s_processing) + "</span>"
                 if s_processing != "" else "",
                 "<br/><span class=\"interpretation\">" + html.escape(s_interpretation) + "</span>"
