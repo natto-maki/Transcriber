@@ -663,7 +663,7 @@ class LanguageDetectionState:
 
 class Transcriber(MultithreadContextManagerImpl):
     def __init__(self, stream, device="cpu", language="ja", auto_detect_language=True,
-                 auto_detect_upper_threshold=0.9, auto_detect_lower_threshold=0.9,
+                 auto_detect_upper_threshold=0.9, auto_detect_lower_threshold=0.5,
                  auto_detect_guard_period=4,
                  embedding_type=None, min_duration=2.0, min_segment_duration=1.0,
                  save_audio_dir=None, **kwargs):
