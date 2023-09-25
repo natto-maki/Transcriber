@@ -1165,7 +1165,7 @@ class Configuration:
     input_devices: list[str] | None = None
     device: str = "cpu"  # "cpu" "gpu" or access point
     language: str = "ja"  # copied to llm_opt.input_language
-    enable_auto_detect_language: bool = True
+    enable_auto_detect_language: bool = False
     enable_simultaneous_interpretation: bool = False
 
     vad_threshold: float = 0.5
