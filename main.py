@@ -654,6 +654,13 @@ class VoiceActivityDetector(MultithreadContextManagerImpl):
         super().open()
 
 
+@dataclasses.dataclass
+class LanguageDetectionState:
+    current_language: str = ""
+    language_probs: dict[str, float] = dataclasses.field(default_factory=dict)
+    guard_period: int = 0
+
+
 class Transcriber(MultithreadContextManagerImpl):
     def __init__(self, stream, device="cpu", language="ja", auto_detect_language=True,
                  auto_detect_upper_threshold=0.9, auto_detect_lower_threshold=0.9,
@@ -681,6 +688,7 @@ class Transcriber(MultithreadContextManagerImpl):
         self.__current_language = self.__language
         self.__detected_languages = deque()
         self.__guard_period = self.__auto_detect_guard_period
+        self.__language_probs = {}
 
         self._stream = stream.add_callback(self.__sentence_callback)
 
@@ -740,18 +748,18 @@ class Transcriber(MultithreadContextManagerImpl):
             self.__guard_period -= 1
             return self.__current_language
 
-        languages = {}
+        language_probs = {}
         for prob_table, duration in self.__detected_languages:
             for language, prob in prob_table:
-                e = languages.setdefault(language, [0.0, 0])
+                e = language_probs.setdefault(language, [0.0, 0])
                 e[0] += duration * prob
                 e[1] += duration
+        self.__language_probs = {language: e[0] / e[1] for language, e in language_probs.items()}
 
-        if len(languages) == 0:
+        if len(language_probs) == 0:
             return self.__current_language
 
-        top_language, e = max(languages.items(), key=lambda e_: e_[1][0] / e_[1][1])
-        top_ratio = e[0] / e[1]
+        top_language, top_ratio = max(self.__language_probs.items(), key=lambda e_: e_[1])
 
         old_language = self.__current_language
         self.__current_language = (
@@ -866,6 +874,13 @@ class Transcriber(MultithreadContextManagerImpl):
     def __sentence_callback(
             self, timestamp: float, audio_data: np.ndarray | None, prop: t.AdditionalProperties | None):
         self._send_request(timestamp, audio_data, prop)
+
+    def ref_language_detection_state(self) -> LanguageDetectionState:
+        ret = LanguageDetectionState()
+        ret.current_language = self.__current_language
+        ret.language_probs = self.__language_probs
+        ret.guard_period = self.__guard_period
+        return ret
 
     def open(self):
         if self.__use_remote():
@@ -1422,6 +1437,9 @@ class Application:
 
     def measure(self) -> VadMeasureResult:
         return self.__vad.measure()
+
+    def ref_language_detection_state(self) -> LanguageDetectionState:
+        return self.__transcriber.ref_language_detection_state()
 
     def map(self, embeddings: list[np.ndarray], update=True) -> list[[int, str | None]]:
         return self.__db.map(embeddings, update=update)
