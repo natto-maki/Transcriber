@@ -1240,6 +1240,8 @@ class _WrapSegmentCallback:
 
 
 class Application:
+    __plugin_instance_cache = {}
+
     def __init__(self, conf=Configuration(), ui_language="en"):
         self.__conf = dataclasses.replace(conf)
         self.__ui_language = ui_language
@@ -1344,19 +1346,23 @@ class Application:
             if plugin_name in self.__conf.disabled_plugins:
                 continue
 
-            try:
-                logging.info("Launching plugin \"%s\"" % dir_name)
-                m = importlib.import_module(".".join(os.path.split(dir_name)))
-                plugin_data_dir = os.path.join(data_dir_name, "plugins", plugin_name)
-                os.makedirs(plugin_data_dir, exist_ok=True)
-                p: pl.Plugin = m.create(
-                    __sampling_rate=sampling_rate, __ui_language=self.__ui_language, __data_dir=plugin_data_dir,
-                    __input_language=self.__conf.llm_opt.input_language,
-                    __output_language=self.__conf.llm_opt.output_language
-                )
-            except Exception as ex:
-                logging.error("Failed to launch plugin \"%s\"" % dir_name, exc_info=ex)
-                continue
+            if plugin_name in self.__plugin_instance_cache:
+                p = self.__plugin_instance_cache[plugin_name]
+            else:
+                try:
+                    logging.info("Launching plugin \"%s\"" % dir_name)
+                    m = importlib.import_module(".".join(os.path.split(dir_name)))
+                    plugin_data_dir = os.path.join(data_dir_name, "plugins", plugin_name)
+                    os.makedirs(plugin_data_dir, exist_ok=True)
+                    p: pl.Plugin = m.create(
+                        __sampling_rate=sampling_rate, __ui_language=self.__ui_language, __data_dir=plugin_data_dir,
+                        __input_language=self.__conf.llm_opt.input_language,
+                        __output_language=self.__conf.llm_opt.output_language
+                    )
+                    self.__plugin_instance_cache[plugin_name] = p
+                except Exception as ex:
+                    logging.error("Failed to launch plugin \"%s\"" % dir_name, exc_info=ex)
+                    continue
 
             self.__plugins[plugin_name] = p
 
