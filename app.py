@@ -507,6 +507,12 @@ def _interval_update():
         additional_rows += "input: latency %.3fs, peak %.1fdB, RMS %.1fdB, %s%s<br/>" % (
             m.latency, m.peak_db, m.rms_db, "active" if m.woke else "sleep",
             ":VAD(max %.2f, ave %.2f)" % (m.vad_max, m.vad_ave) if m.woke else "")
+        if _conf.enable_auto_detect_language:
+            m = _app.ref_language_detection_state()
+            additional_rows += "language: current \"%s\", guard_period %d, prob {%s}" % (
+                m.current_language, m.guard_period, " ".join([
+                    "\"%s\":%.2f" % (name, prob)
+                    for name, prob in sorted(m.language_probs.items(), key=lambda e_: -e_[1])[:5]]))
         additional_rows += "</span></td></tr>"
 
     return text_table_header % {
