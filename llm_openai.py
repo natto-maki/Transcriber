@@ -351,7 +351,7 @@ _interpret_p0_template = {
     }
 }
 
-_interpretation_executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+_interpretation_executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
 _interpretation_task_count = th.Semaphore(1)
 
 
