@@ -28,6 +28,8 @@ en:
   conf_apply: "Apply"
   conf_enable_plugins: "Enable plugins (requires application reboot to apply)"
   conf_input_language: "Language of input speech"
+  conf_enable_auto_detect_language: "Enable language estimation of input speech"
+  conf_enable_simultaneous_interpretation: "Enable real-time translation when input and output languages are different"
   conf_output_language: "Language of output"
   conf_ui_language: "UI language (requires application reboot to apply)"
   conf_ui_show_input_status: "Show measurement results of input audio"

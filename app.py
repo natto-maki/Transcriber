@@ -666,7 +666,8 @@ def _pre_apply_configuration():
 
 
 def _apply_configuration(
-        f_conf_enable_plugins, f_conf_input_language, f_conf_output_language,
+        f_conf_enable_plugins, f_conf_input_language,
+        f_conf_enable_auto_detect_language, f_conf_enable_simultaneous_interpretation, f_conf_output_language,
         f_conf_ui_language, f_conf_ui_show_input_status, f_conf_ui_show_statement_properties,
         f_conf_input_devices, f_conf_device,
         f_conf_vad_threshold, f_conf_vad_pre_hold, f_conf_vad_post_hold, f_conf_vad_post_apply,
@@ -694,6 +695,8 @@ def _apply_configuration(
     conf.input_devices = f_conf_input_devices if len(f_conf_input_devices) != 0 else None
     conf.device = f_conf_device
     conf.language = f_conf_input_language
+    conf.enable_auto_detect_language = f_conf_enable_auto_detect_language
+    conf.enable_simultaneous_interpretation = f_conf_enable_simultaneous_interpretation
 
     conf.vad_threshold = f_conf_vad_threshold
     conf.vad_pre_hold = f_conf_vad_pre_hold
@@ -831,6 +834,12 @@ def app_main(args=None):
                     label=i18n.t('app.conf_input_language'),
                     multiselect=False, allow_custom_value=False,
                     choices=["en", "ja"], value=_conf.language)
+                f_conf_enable_auto_detect_language = gr.Checkbox(
+                    label=i18n.t('app.conf_enable_auto_detect_language'),
+                    value=_conf.enable_auto_detect_language)
+                f_conf_enable_simultaneous_interpretation = gr.Checkbox(
+                    label=i18n.t('app.conf_enable_simultaneous_interpretation'),
+                    value=_conf.enable_simultaneous_interpretation)
                 f_conf_output_language = gr.Dropdown(
                     label=i18n.t('app.conf_output_language'),
                     multiselect=False, allow_custom_value=False,
@@ -973,7 +982,8 @@ def app_main(args=None):
         f_person_erase.click(
             _erase_person, [f_person_selector], [f_person_selector, f_person_list])
         f_conf_apply.click(_pre_apply_configuration, None, [f_conf_apply]).then(_apply_configuration, [
-            f_conf_enable_plugins, f_conf_input_language, f_conf_output_language,
+            f_conf_enable_plugins, f_conf_input_language,
+            f_conf_enable_auto_detect_language, f_conf_enable_simultaneous_interpretation, f_conf_output_language,
             f_conf_ui_language, f_conf_ui_show_input_status, f_conf_ui_show_statement_properties,
             f_conf_input_devices, f_conf_device,
             f_conf_vad_threshold, f_conf_vad_pre_hold, f_conf_vad_post_hold, f_conf_vad_post_apply,
