@@ -77,6 +77,15 @@ def _restart(conf: main.Configuration):
         logging.info("application restarted")
 
 
+def _reboot():
+    global _app, _conf
+    with _app_lock0:
+        logging.info("rebooting...")
+        if _app.is_opened():
+            _app.close()
+        os.execv(sys.executable, ["python3"] + sys.argv)
+
+
 block_css = '''\
 footer {
   visibility: hidden;
@@ -741,6 +750,12 @@ def _apply_configuration(
 
     conf.disabled_plugins = [plugin for plugin in _find_plugins() if plugin not in f_conf_enable_plugins]
 
+    reboot_required = (
+        _ui_conf.language != ui_conf.language or
+        _ui_conf.openai_api_key != ui_conf.openai_api_key or
+        _conf.disabled_plugins != conf.disabled_plugins
+    )
+
     _ui_conf = ui_conf
     _restart(conf)
     with tools.SafeWrite(os.path.join(main.data_dir_name, "config.pickle"), "wb") as f:
@@ -748,7 +763,16 @@ def _apply_configuration(
     with tools.SafeWrite(os.path.join(main.data_dir_name, "ui_config.pickle"), "wb") as f:
         pickle.dump({"conf": ui_conf}, f.stream)
 
-    return gr.Button.update(interactive=True)
+    return gr.Button.update(
+        interactive=not reboot_required,
+        value=i18n.t('app.conf_apply_reload') if reboot_required else i18n.t('app.conf_apply')
+    ), reboot_required
+
+
+def _post_apply_configuration(f_reboot_flag):
+    if f_reboot_flag:
+        logging.info("Reboot requested due to configuration changes")
+        _reboot()
 
 
 def _load_configuration():
@@ -785,6 +809,8 @@ def app_main(args=None):
     _live_checker_thread.start()
 
     with gr.Blocks(title=i18n.t("app.application_name"), css=block_css) as demo:
+        f_reboot_flag = gr.Checkbox(visible=False, value=False)
+
         f_api_playback_audio = gr.Button(visible=False)
         f_api_playback_audio_files = gr.Textbox(visible=False)
         f_api_playback_audio.click(_playback_audio, [f_api_playback_audio_files], None, api_name="playback_audio")
@@ -1002,19 +1028,29 @@ def app_main(args=None):
             f_conf_qualify_soft_limit, f_conf_qualify_hard_limit, f_conf_qualify_silent_interval,
             f_conf_qualify_merge_interval, f_conf_qualify_merge_threshold,
             f_conf_qualify_llm_model_name_step1, f_conf_qualify_llm_model_name_step2,
-            *f_conf_args], [f_conf_apply])
+            *f_conf_args], [f_conf_apply, f_reboot_flag]).then(
+            _post_apply_configuration, [f_reboot_flag], None,
+            _js="(reboot) => reboot ? window.setTimeout(function() { window.location.reload() }, 5000) : 0")
 
         demo.load(_interval_update, None, [f_text], every=1)
 
     demo.queue().launch(server_name="0.0.0.0")  # TODO network opts
 
 
+def _log_filter(record):
+    if record.name == "httpx":
+        return False
+    if record.name == "faster_whisper" and record.message.startswith("Processing audio with duration"):
+        return False
+    return True
+
+
 if __name__ == '__main__':
     _ui_conf = _load_ui_configuration()
 
     logging.basicConfig(
-        format='%(asctime)s: %(name)s:%(funcName)s:%(lineno)d %(levelname)s: %(message)s', level=logging.WARNING)
-    logging.getLogger().handlers[0].addFilter(lambda record: record.name != "httpx")
+        format='%(asctime)s: %(name)s:%(funcName)s:%(lineno)d %(levelname)s: %(message)s', level=logging.INFO)
+    logging.getLogger().handlers[0].addFilter(lambda record: _log_filter(record))
 
     language_code = _ui_conf.language
     if language_code == "auto":

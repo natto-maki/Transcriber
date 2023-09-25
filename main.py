@@ -1421,6 +1421,7 @@ class Application:
         self.__sync_thread = None
 
         self.__qualifier.close()
+        self.__sync()
 
     def is_opened(self):
         return self.__opened
