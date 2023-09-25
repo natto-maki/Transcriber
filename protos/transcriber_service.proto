@@ -4,6 +4,7 @@ syntax = "proto3";
 
 service TranscriberService {
     rpc Transcribe(TranscribeRequest) returns (TranscribeResponse) {}
+    rpc DetectLanguage(DetectLanguageRequest) returns (DetectLanguageResponse) {}
 }
 
 message TranscribeRequest {
@@ -16,4 +17,12 @@ message TranscribeRequest {
 message TranscribeResponse {
     string segments = 1;
     repeated bytes embeddings = 2;
+}
+
+message DetectLanguageRequest {
+    bytes audio_data = 1;
+}
+
+message DetectLanguageResponse {
+    string detected_languages = 1;
 }
