@@ -13,6 +13,7 @@ import tiktoken
 import i18n
 
 import main_types as t
+import tools
 
 implied_tokens_per_request = 3
 
@@ -313,10 +314,7 @@ def _qualify(sentences: list[t.Sentence], model_name: str, opt: QualifyOptions) 
     return _summarize_sub(sentences, model_name, _qualify_p2_system(opt))
 
 
-def qualify(
-        sentences: list[t.Sentence],
-        opt: QualifyOptions | None = None) -> t.QualifiedResult:
-
+def _qualify_procedure(sentences: list[t.Sentence], opt: QualifyOptions | None = None) -> t.QualifiedResult:
     if opt is None:
         opt = QualifyOptions()
 
@@ -338,6 +336,13 @@ def qualify(
         summaries=summaries,
         action_items=action_items
     )
+
+
+def qualify(
+        sentences: list[t.Sentence],
+        opt: QualifyOptions | None = None, timeout=120.0) -> tools.AsyncCallFuture:
+    return tools.async_call(
+        _qualify_procedure, [s.clone() for s in sentences], dataclasses.replace(opt), timeout=timeout)
 
 
 _interpret_p0_template = {

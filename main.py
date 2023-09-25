@@ -944,6 +944,9 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
         self.__history: list[t.SentenceGroup] = []
         self.__backend_generation = None
 
+        self.__lock2 = th.Lock()
+        self.__qualify_future = None
+
         self.__freeze_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         self.__callback_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         self.__interpretation_executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
@@ -970,7 +973,14 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
             if len(language_count) != 0 else self.__default_input_language
 
         try:
-            qualified = llm.qualify(gr.sentences, opt=self.__llm_opt)
+            f = llm.qualify(gr.sentences, opt=self.__llm_opt)
+            with self.__lock2:
+                self.__qualify_future = f
+            qualified = f.wait_result(on_timeout=1)
+            if qualified is None:
+                return
+            if isinstance(qualified, int):
+                raise Exception("timeout")
             with self.__lock0:
                 gr.qualified = qualified
                 gr.state = t.SENTENCE_QUALIFIED
@@ -1137,6 +1147,12 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
                     gr.state = t.SENTENCE_QUALIFYING
                     self.__freeze_executor.submit(self.__freeze, gr_index, gr)
         super().open()
+
+    def close(self):
+        with self.__lock2:
+            if self.__qualify_future is not None:
+                self.__qualify_future.cancel()
+        super().close()
 
     def group_count(self) -> int:
         with self.__lock0:

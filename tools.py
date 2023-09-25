@@ -1,6 +1,8 @@
 import os
 import glob
 import logging
+import threading as th
+import concurrent.futures
 
 
 def _make_file_name_for_safe_write(file_name):
@@ -70,3 +72,35 @@ class SafeWrite:
         _safe_remove(self._file_name0)
         _safe_rename(self._file_name2, self._file_name0)
         return False
+
+
+class AsyncCallFuture:
+    def __init__(self, timeout: float):
+        self.__semaphore = th.Semaphore(0)
+        self.__result = None
+        self.__timeout = timeout
+
+    def set_result(self, result):
+        self.__result = result
+        self.__semaphore.release()
+
+    def wait_result(self, on_timeout=None):
+        if self.__semaphore.acquire(timeout=self.__timeout):
+            return self.__result
+        return on_timeout
+
+    def cancel(self, result):
+        self.set_result(result)
+
+
+_async_call_executor = concurrent.futures.ThreadPoolExecutor(max_workers=8)
+
+
+def _async_call_caller(f: AsyncCallFuture, process_callable, args, kwargs):
+    f.set_result(process_callable(*args, **kwargs))
+
+
+def async_call(process_callable, *args, timeout=90.0, **kwargs) -> AsyncCallFuture:
+    f = AsyncCallFuture(timeout)
+    _async_call_executor.submit(_async_call_caller, f, process_callable, args, kwargs)
+    return f
