@@ -139,8 +139,10 @@ class MultithreadContextManagerImpl(ContextManagerImpl):
     def _request_handler(self, *args, **kwargs):
         raise NotImplementedError
 
-    def __push_request(self, *args):
+    def __push_request(self, *args, erase_pending_requests=False):
         with self.__mutex:
+            if erase_pending_requests:
+                self.__requests.clear()
             self.__requests.append([*args])
         self.__semaphore.release()
 
@@ -183,7 +185,7 @@ class MultithreadContextManagerImpl(ContextManagerImpl):
 
     def close(self):
         super().close()
-        self.__push_request(-1, None, None, None)
+        self.__push_request(-1, None, None, None, erase_pending_requests=True)
         self.__thread.join()
         self.__thread = None
         self.__requests.clear()
