@@ -478,7 +478,7 @@ def _output_text(reader, include_anker=False):
         if g.qualified is None:
             if g.state == t.SENTENCE_QUALIFY_ERROR:
                 text += "<td><span class=\"error\">%s</span></td>" % i18n.t("app.text_error_in_qualifying")
-                text += "<td><small>%s</small></td>" % _output_sentences(
+                text += "<td>%s</td>" % _output_sentences(
                     g.sentences, show_properties=_ui_conf.show_statement_properties)
             else:
                 text += "<td colspan=\"2\">%s</td>" % _output_sentences(
