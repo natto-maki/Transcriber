@@ -6,7 +6,7 @@ ja:
   text_table_header_conversation: "会話(校正済み)"
   text_error_in_qualifying: "分析中にエラーが発生しました"
   text_action_item: "AI:"
-  text_language_detected: "入力言語を%(new_language)sに切り替えました (変更前: %(old_language)s)"
+  text_language_detected: "入力言語を%(new_language)sに切り替えました"
   tab_current: "記録中"
   tab_history: "履歴"
   tab_diarization: "話者識別"
