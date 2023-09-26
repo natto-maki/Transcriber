@@ -990,10 +990,10 @@ def app_main(args=None):
                 with gr.Accordion(i18n.t('app.conf_qualify_group'), open=False):
                     f_conf_qualify_soft_limit = gr.Slider(
                         label=i18n.t('app.conf_qualify_soft_limit'),
-                        minimum=60.0, maximum=600.0, value=_conf.qualify_soft_limit, step=10.0)
+                        minimum=30.0, maximum=600.0, value=_conf.qualify_soft_limit, step=10.0)
                     f_conf_qualify_hard_limit = gr.Slider(
                         label=i18n.t('app.conf_qualify_hard_limit'),
-                        minimum=60.0, maximum=600.0, value=_conf.qualify_hard_limit, step=10.0)
+                        minimum=30.0, maximum=600.0, value=_conf.qualify_hard_limit, step=10.0)
                     f_conf_qualify_silent_interval = gr.Slider(
                         label=i18n.t('app.conf_qualify_silent_interval'),
                         minimum=1.0, maximum=60.0, value=_conf.qualify_silent_interval, step=1.0)
@@ -1055,7 +1055,7 @@ def app_main(args=None):
 def _log_filter(record):
     if record.name == "httpx":
         return False
-    if record.name == "faster_whisper" and record.message.startswith("Processing audio with duration"):
+    if record.name == "faster_whisper" and record.msg.startswith("Processing audio with duration"):
         return False
     return True
 
