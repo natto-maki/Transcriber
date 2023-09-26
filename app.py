@@ -10,6 +10,7 @@ import locale
 import dataclasses
 import re
 import concurrent.futures
+import signal
 
 # noinspection PyPackageRequirements
 import i18n
@@ -34,8 +35,10 @@ class UiConfiguration:
     show_input_status: bool = False
     show_statement_properties: bool = False
     openai_api_key: str = ""
+    sleep_when_not_accessed: bool = False
 
 
+_stop = False
 _app_lock0 = th.Lock()
 _app: main.Application | None = None
 _conf: main.Configuration | None = None
@@ -49,7 +52,7 @@ def _keep_alive():
     global _last_called
 
     _last_called = time.time()
-    if not _app.is_opened():
+    if not _stop and not _app.is_opened():
         with _app_lock0:
             logging.info("opening application...")
             _app.open()
@@ -59,7 +62,7 @@ def _keep_alive():
 def _live_checker():
     while True:
         time.sleep(5.0)
-        if _app.is_opened() and _last_called + 5.0 < time.time():
+        if _ui_conf.sleep_when_not_accessed and _app.is_opened() and _last_called + 5.0 < time.time():
             with _app_lock0:
                 logging.info("closing application...")
                 _app.close()
@@ -75,6 +78,15 @@ def _restart(conf: main.Configuration):
         _app = main.Application(conf, _ui_conf.language)
         _conf = _app.get_current_configuration()
         logging.info("application restarted")
+
+
+def _reboot():
+    global _app, _conf
+    with _app_lock0:
+        logging.info("rebooting...")
+        if _app.is_opened():
+            _app.close()
+        os.execv(sys.executable, ["python3"] + sys.argv)
 
 
 block_css = '''\
@@ -672,7 +684,7 @@ def _pre_apply_configuration():
 
 
 def _apply_configuration(
-        f_conf_enable_plugins, f_conf_input_language,
+        f_conf_sleep_when_not_accessed, f_conf_enable_plugins, f_conf_input_language,
         f_conf_enable_auto_detect_language, f_conf_enable_simultaneous_interpretation, f_conf_output_language,
         f_conf_ui_language, f_conf_ui_show_input_status, f_conf_ui_show_statement_properties,
         f_conf_input_devices, f_conf_device,
@@ -696,6 +708,7 @@ def _apply_configuration(
     ui_conf.show_input_status = f_conf_ui_show_input_status
     ui_conf.show_statement_properties = f_conf_ui_show_statement_properties
     ui_conf.openai_api_key = f_conf_openai_api_key
+    ui_conf.sleep_when_not_accessed = f_conf_sleep_when_not_accessed
 
     conf = main.Configuration()
     conf.input_devices = f_conf_input_devices if len(f_conf_input_devices) != 0 else None
@@ -741,6 +754,12 @@ def _apply_configuration(
 
     conf.disabled_plugins = [plugin for plugin in _find_plugins() if plugin not in f_conf_enable_plugins]
 
+    reboot_required = (
+        _ui_conf.language != ui_conf.language or
+        _ui_conf.openai_api_key != ui_conf.openai_api_key or
+        _conf.disabled_plugins != conf.disabled_plugins
+    )
+
     _ui_conf = ui_conf
     _restart(conf)
     with tools.SafeWrite(os.path.join(main.data_dir_name, "config.pickle"), "wb") as f:
@@ -748,7 +767,16 @@ def _apply_configuration(
     with tools.SafeWrite(os.path.join(main.data_dir_name, "ui_config.pickle"), "wb") as f:
         pickle.dump({"conf": ui_conf}, f.stream)
 
-    return gr.Button.update(interactive=True)
+    return gr.Button.update(
+        interactive=not reboot_required,
+        value=i18n.t('app.conf_apply_reload') if reboot_required else i18n.t('app.conf_apply')
+    ), reboot_required
+
+
+def _post_apply_configuration(f_reboot_flag):
+    if f_reboot_flag:
+        logging.info("Reboot requested due to configuration changes")
+        _reboot()
 
 
 def _load_configuration():
@@ -783,8 +811,12 @@ def app_main(args=None):
 
     _live_checker_thread = th.Thread(target=_live_checker)
     _live_checker_thread.start()
+    if not _ui_conf.sleep_when_not_accessed:
+        _keep_alive()
 
     with gr.Blocks(title=i18n.t("app.application_name"), css=block_css) as demo:
+        f_reboot_flag = gr.Checkbox(visible=False, value=False)
+
         f_api_playback_audio = gr.Button(visible=False)
         f_api_playback_audio_files = gr.Textbox(visible=False)
         f_api_playback_audio.click(_playback_audio, [f_api_playback_audio_files], None, api_name="playback_audio")
@@ -830,6 +862,9 @@ def app_main(args=None):
             gr.Markdown(i18n.t('app.conf_apply_desc'))
             f_conf_apply = gr.Button(value=i18n.t('app.conf_apply'), variant="primary")
             with gr.Group():
+                f_conf_sleep_when_not_accessed = gr.Checkbox(
+                    label=i18n.t('app.conf_sleep_when_not_accessed'),
+                    value=_ui_conf.sleep_when_not_accessed)
                 f_conf_enable_plugins = gr.CheckboxGroup(
                     visible=(len(_find_plugins()) != 0),
                     label=i18n.t('app.conf_enable_plugins'),
@@ -988,7 +1023,7 @@ def app_main(args=None):
         f_person_erase.click(
             _erase_person, [f_person_selector], [f_person_selector, f_person_list])
         f_conf_apply.click(_pre_apply_configuration, None, [f_conf_apply]).then(_apply_configuration, [
-            f_conf_enable_plugins, f_conf_input_language,
+            f_conf_sleep_when_not_accessed, f_conf_enable_plugins, f_conf_input_language,
             f_conf_enable_auto_detect_language, f_conf_enable_simultaneous_interpretation, f_conf_output_language,
             f_conf_ui_language, f_conf_ui_show_input_status, f_conf_ui_show_statement_properties,
             f_conf_input_devices, f_conf_device,
@@ -1002,19 +1037,46 @@ def app_main(args=None):
             f_conf_qualify_soft_limit, f_conf_qualify_hard_limit, f_conf_qualify_silent_interval,
             f_conf_qualify_merge_interval, f_conf_qualify_merge_threshold,
             f_conf_qualify_llm_model_name_step1, f_conf_qualify_llm_model_name_step2,
-            *f_conf_args], [f_conf_apply])
+            *f_conf_args], [f_conf_apply, f_reboot_flag]).then(
+            _post_apply_configuration, [f_reboot_flag], None,
+            _js="(reboot) => reboot ? window.setTimeout(function() { window.location.reload() }, 5000) : 0")
 
         demo.load(_interval_update, None, [f_text], every=1)
 
     demo.queue().launch(server_name="0.0.0.0")  # TODO network opts
 
 
+def _log_filter(record):
+    if record.name == "httpx":
+        return False
+    if record.name == "faster_whisper" and record.message.startswith("Processing audio with duration"):
+        return False
+    return True
+
+
+def _sigint_handler(signum, frame):
+    global _stop, _app
+    _ = signum
+    _ = frame
+    try:
+        logging.info("SIGINT received, closing application...")
+        _stop = True
+        if _app is not None and _app.is_opened():
+            _app.close()
+        logging.info("application closed")
+    except Exception as ex:
+        _ = ex
+    signal.raise_signal(signal.SIGTERM)
+
+
 if __name__ == '__main__':
+    signal.signal(signal.SIGINT, _sigint_handler)
+
     _ui_conf = _load_ui_configuration()
 
     logging.basicConfig(
-        format='%(asctime)s: %(name)s:%(funcName)s:%(lineno)d %(levelname)s: %(message)s', level=logging.WARNING)
-    logging.getLogger().handlers[0].addFilter(lambda record: record.name != "httpx")
+        format='%(asctime)s: %(name)s:%(funcName)s:%(lineno)d %(levelname)s: %(message)s', level=logging.INFO)
+    logging.getLogger().handlers[0].addFilter(lambda record: _log_filter(record))
 
     language_code = _ui_conf.language
     if language_code == "auto":
