@@ -113,6 +113,12 @@ main.personList {
   flex: 1;
   overflow: auto;
 }
+table.history tr td {
+  border-bottom: 1px solid #808080 !important;
+}
+table.personList tr td {
+  border-bottom: 1px solid #808080 !important;
+}
 table.sentences {
   width: 100%;
   margin-bottom: 0px !important;
@@ -187,7 +193,7 @@ img.playback_audio:active {
 text_table_header = '''\
 <main class="current">
 <section class="historyBlock">
-<table width="100%%">
+<table class="history" width="100%%">
 <tr>
 <th width="60px">%(time)s</th>
 <th width="calc(45%% - 60px)">%(summary)s</th>
@@ -211,7 +217,7 @@ move_to_last_js = '''\
 history_text_table_header = '''\
 <main class="history">
 <section class="historyBlock">
-<table width="100%%">
+<table class="history" width="100%%">
 <tr>
 <th width="60px">%(time)s</th>
 <th width="calc(45%% - 60px)">%(summary)s</th>
@@ -228,7 +234,7 @@ history_text_table_footer = '''\
 person_list_table_header = '''\
 <main class="personList">
 <section class="historyBlock">
-<table width="100%%">
+<table class="personList" width="100%%">
 <tr>
 <th width="20%%">%(person_id)s</th>
 <th width="25%%">%(superseded_by)s</th>
@@ -478,7 +484,7 @@ def _output_text(reader, include_anker=False):
         if g.qualified is None:
             if g.state == t.SENTENCE_QUALIFY_ERROR:
                 text += "<td><span class=\"error\">%s</span></td>" % i18n.t("app.text_error_in_qualifying")
-                text += "<td><small>%s</small></td>" % _output_sentences(
+                text += "<td>%s</td>" % _output_sentences(
                     g.sentences, show_properties=_ui_conf.show_statement_properties)
             else:
                 text += "<td colspan=\"2\">%s</td>" % _output_sentences(

@@ -6,7 +6,7 @@ en:
   text_table_header_conversation: "conversation"
   text_error_in_qualifying: "An error occurred during analysis"
   text_action_item: "A.I."
-  text_language_detected: "Switched to %(new_language)s as input language (previous: %(old_language)s)"
+  text_language_detected: "Switched to %(new_language)s as input language"
   tab_current: "Current"
   tab_history: "Archive"
   tab_diarization: "Diarization"
