@@ -10,6 +10,7 @@ import locale
 import dataclasses
 import re
 import concurrent.futures
+import signal
 
 # noinspection PyPackageRequirements
 import i18n
@@ -37,6 +38,7 @@ class UiConfiguration:
     sleep_when_not_accessed: bool = False
 
 
+_stop = False
 _app_lock0 = th.Lock()
 _app: main.Application | None = None
 _conf: main.Configuration | None = None
@@ -50,7 +52,7 @@ def _keep_alive():
     global _last_called
 
     _last_called = time.time()
-    if not _app.is_opened():
+    if not _stop and not _app.is_opened():
         with _app_lock0:
             logging.info("opening application...")
             _app.open()
@@ -1052,7 +1054,24 @@ def _log_filter(record):
     return True
 
 
+def _sigint_handler(signum, frame):
+    global _stop, _app
+    _ = signum
+    _ = frame
+    try:
+        logging.info("SIGINT received, closing application...")
+        _stop = True
+        if _app is not None and _app.is_opened():
+            _app.close()
+        logging.info("application closed")
+    except Exception as ex:
+        _ = ex
+    signal.raise_signal(signal.SIGTERM)
+
+
 if __name__ == '__main__':
+    signal.signal(signal.SIGINT, _sigint_handler)
+
     _ui_conf = _load_ui_configuration()
 
     logging.basicConfig(
