@@ -22,9 +22,10 @@ from pyannote.audio import Model
 # noinspection PyPackageRequirements
 from pyannote.audio import Inference
 
+import common
 import transcriber_hack
 
-sampling_rate = 16000
+sampling_rate = common.sampling_rate
 
 
 class Servicer(transcriber_service_pb2_grpc.TranscriberServiceServicer):

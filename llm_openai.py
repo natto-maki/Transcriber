@@ -340,7 +340,7 @@ def _qualify_procedure(sentences: list[t.Sentence], opt: QualifyOptions | None =
 
 def qualify(
         sentences: list[t.Sentence],
-        opt: QualifyOptions | None = None, timeout=120.0) -> tools.AsyncCallFuture:
+        opt: QualifyOptions | None = None, timeout=180.0) -> tools.AsyncCallFuture:
     return tools.async_call(
         _qualify_procedure, [s.clone() for s in sentences], dataclasses.replace(opt), timeout=timeout)
 

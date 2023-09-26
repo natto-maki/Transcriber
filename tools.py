@@ -74,6 +74,35 @@ class SafeWrite:
         return False
 
 
+class SharedModel:
+    def __init__(self):
+        self.__model = None
+        self.__ref_count = 0
+        self.__lock0 = th.Lock()
+        self.__semaphore = th.BoundedSemaphore(1)
+
+    def open(self, factory):
+        with self.__lock0:
+            if self.__ref_count == 0:
+                self.__model = factory()
+            self.__ref_count += 1
+        return self
+
+    def ref(self):
+        with self.__lock0:
+            if self.__ref_count == 0:
+                raise RuntimeError()
+            return self.__model
+
+    def __enter__(self):
+        self.__semaphore.acquire()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.__semaphore.release()
+        return False
+
+
 class AsyncCallFuture:
     def __init__(self, timeout: float):
         self.__semaphore = th.Semaphore(0)

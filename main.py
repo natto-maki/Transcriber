@@ -9,35 +9,23 @@ import time
 import threading as th
 import logging
 import pickle
-import json
 import concurrent.futures
 from collections import deque
 import dataclasses
 import importlib
 
-# noinspection PyPackageRequirements
-import grpc
-import transcriber_service_pb2
-import transcriber_service_pb2_grpc
-
 import numpy as np
 import sounddevice as sd
 import soundfile as sf
 import onnxruntime
-import torch
-from faster_whisper import WhisperModel
-from speechbrain.pretrained import EncoderClassifier
-# noinspection PyPackageRequirements
-from pyannote.audio import Model
-# noinspection PyPackageRequirements
-from pyannote.audio import Inference
 
+import common
 import tools
 import main_types as t
 import emb_db as db
 import llm_openai as llm
+import transcriber
 import transcriber_plugin as pl
-import transcriber_hack
 
 
 # workaround for an error on x86 Mac
@@ -45,8 +33,8 @@ import transcriber_hack
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
 
 
-sampling_rate = 16000
-frame_size = 512
+sampling_rate = common.sampling_rate
+frame_size = common.frame_size
 data_dir_name = "data"
 
 
@@ -417,35 +405,6 @@ class SuppressAudioInput(ContextManagerImpl):
             self.__suppress_count -= 1
 
 
-class SharedModel:
-    def __init__(self):
-        self.__model = None
-        self.__ref_count = 0
-        self.__lock0 = th.Lock()
-        self.__semaphore = th.BoundedSemaphore(1)
-
-    def open(self, factory):
-        with self.__lock0:
-            if self.__ref_count == 0:
-                self.__model = factory()
-            self.__ref_count += 1
-        return self
-
-    def ref(self):
-        with self.__lock0:
-            if self.__ref_count == 0:
-                raise RuntimeError()
-            return self.__model
-
-    def __enter__(self):
-        self.__semaphore.acquire()
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        self.__semaphore.release()
-        return False
-
-
 @dataclasses.dataclass
 class _VadFrame:
     audio_data: np.ndarray
@@ -492,7 +451,7 @@ class VoiceActivityDetector(MultithreadContextManagerImpl):
 
         self._stream = stream.add_callback(self.__audio_callback)
 
-        self.__session = SharedModel().open(self.__open_model)
+        self.__session = tools.SharedModel().open(self.__open_model)
         self.__h: np.ndarray | None = None
         self.__c: np.ndarray | None = None
 
@@ -671,21 +630,16 @@ class Transcriber(MultithreadContextManagerImpl):
                  save_audio_dir=None, **kwargs):
 
         super().__init__(**kwargs)
-        self.__device = device
         self.__language = language
         self.__auto_detect_language = auto_detect_language
         self.__auto_detect_upper_threshold = auto_detect_upper_threshold
         self.__auto_detect_lower_threshold = auto_detect_lower_threshold
         self.__auto_detect_guard_period = auto_detect_guard_period
-        self.__embedding_type = embedding_type
         self.__min_duration_in_samples = int(min_duration * sampling_rate)
-        self.__min_segment_duration = min_segment_duration
         self.__save_audio_dir = save_audio_dir
 
-        self.__model = SharedModel()
-        self.__embedding_model = SharedModel()
-        self.__channel = None
-        self.__stub = None
+        self.__transcriber = transcriber.Transcriber(
+            device=device, embedding_type=embedding_type, min_segment_duration=min_segment_duration)
 
         self.__current_language = self.__language
         self.__detected_languages = deque()
@@ -694,52 +648,13 @@ class Transcriber(MultithreadContextManagerImpl):
 
         self._stream = stream.add_callback(self.__sentence_callback)
 
-        # It appears that model opening must be done from the main thread, or it will fail.
-        if self.__use_remote():
-            return
-        self.__model.open(self.__open_transcriber_model)
-        if self.__embedding_type is not None:
-            self.__embedding_model.open(self.__open_embedding_model)
-
-    def __use_remote(self):
-        return not self.__device.startswith("cpu") and not self.__device.startswith("gpu")
-
-    def __open_transcriber_model(self):
-        if self.__device == "gpu":
-            return WhisperModel("large-v2", device="cuda", compute_type="float16")
-        else:
-            return WhisperModel("small", device="cpu", compute_type="int8")
-
-    def __open_embedding_model(self):
-        if self.__embedding_type == "speechbrain":
-            return EncoderClassifier.from_hparams(
-                source="speechbrain/spkrec-ecapa-voxceleb",
-                run_opts={"device": "cuda"} if self.__device == "gpu" else None)
-        elif self.__embedding_type == "pyannote":
-            return Inference(Model.from_pretrained(
-                "resources/pynannote_embedding_pytorch_model.bin"), window="whole")
-        else:
-            raise ValueError()
-
     def __update_language(self, audio_data: np.ndarray) -> str:
         if len(audio_data) > sampling_rate * 30:
             audio_data = audio_data[:sampling_rate * 30]
 
-        if self.__channel is None:
-            with self.__model:
-                self.__detected_languages.append(
-                    (transcriber_hack.detect_language(self.__model.ref(), audio_data), len(audio_data)))
-        else:
-            try:
-                response = self.__stub.DetectLanguage(transcriber_service_pb2.DetectLanguageRequest(
-                    audio_data=audio_data.tobytes()))
-                languages = json.loads(response.detected_languages)
-            except Exception as ex:
-                languages = {}
-                logging.error("Transcriber: exception raised", exc_info=ex)
-
-            if len(languages) != 0:
-                self.__detected_languages.append((languages, len(audio_data)))
+        languages = self.__transcriber.detect_language(audio_data)
+        if languages is not None:
+            self.__detected_languages.append((languages, len(audio_data)))
 
         while (len(self.__detected_languages) > 8 or
                (len(self.__detected_languages) > 2 and
@@ -795,54 +710,9 @@ class Transcriber(MultithreadContextManagerImpl):
                     timestamp, timestamp, "", sentence_type=t.SentenceType.LanguageDetected, payload={
                         "old_language": old_language, "new_language": self.__current_language}))
 
-        if self.__channel is None:
-            with self.__model:
-                segments, _ = self.__model.ref().transcribe(audio_data, beam_size=5, language=self.__current_language)
-            segments_j = [[s.start, s.end, s.text] for s in segments
-                          if s.end - s.start >= self.__min_segment_duration]
-
-            embeddings = [None for _ in range(len(segments_j))]
-            if self.__embedding_type == "speechbrain":
-                for i, s in enumerate(segments_j):
-                    audio_tensor = torch.from_numpy(audio_data[int(s[0] * sampling_rate):int(s[1] * sampling_rate)])
-                    try:
-                        with self.__embedding_model:
-                            embeddings[i] = (self.__embedding_model.ref().encode_batch(audio_tensor)
-                                             .cpu().detach().numpy().flatten())
-                    except Exception as ex:
-                        embeddings[i] = None
-                        logging.error("Transcriber: exception raised", exc_info=ex)
-
-            elif self.__embedding_type == "pyannote":
-                for i, s in enumerate(segments_j):
-                    # Seems to accept ndarray and Tensor, but cannot confirm working properly → go through .wav
-                    with sf.SoundFile(
-                            "tmp.wav", mode="w",
-                            samplerate=sampling_rate, channels=1, subtype="FLOAT") as f:
-                        f.write(audio_data[int(s[0] * sampling_rate):int(s[1] * sampling_rate)])
-                    try:
-                        with self.__embedding_model:
-                            embeddings[i] = self.__embedding_model.ref()("tmp.wav").flatten().astype(np.float32)
-                    except Exception as ex:
-                        embeddings[i] = None
-                        logging.error("Transcriber: exception raised", exc_info=ex)
-
-        else:
-            response = None
-            try:
-                response = self.__stub.Transcribe(transcriber_service_pb2.TranscribeRequest(
-                    audio_data=audio_data.tobytes(), language=self.__current_language,
-                    get_embedding=self.__embedding_type if self.__embedding_type is not None else "",
-                    min_segment_duration=self.__min_segment_duration))
-                segments_j = json.loads(response.segments)
-            except Exception as ex:
-                segments_j = []
-                logging.error("Transcriber: exception raised", exc_info=ex)
-
-            embeddings = [None for _ in range(len(segments_j))]
-            if self.__embedding_type is not None and response is not None:
-                for i, s in enumerate(segments_j):
-                    embeddings[i] = np.frombuffer(response.embeddings[i], dtype=np.float32)
+        segments = self.__transcriber.transcribe(audio_data, self.__current_language)
+        if segments is None:
+            return
 
         tm1 = time.time_ns()
         processing_time = (tm1 - tm0) / 1000000000
@@ -853,12 +723,12 @@ class Transcriber(MultithreadContextManagerImpl):
                 (processing_time, len(audio_data) / sampling_rate))
 
         if self._has_callback() or self.__save_audio_dir is not None:
-            for i, s in enumerate(segments_j):
-                segment_audio_data = raw_audio_data[int(s[0] * sampling_rate):int(s[1] * sampling_rate)]
+            for s in segments:
+                segment_audio_data = raw_audio_data[int(s.tm0 * sampling_rate):int(s.tm1 * sampling_rate)]
 
                 audio_file_name = None
                 if self.__save_audio_dir is not None:
-                    audio_file_name = os.path.join(self.__save_audio_dir, "%f.wav" % (timestamp + s[0]))
+                    audio_file_name = os.path.join(self.__save_audio_dir, "%f.wav" % (timestamp + s.tm0))
                     with sf.SoundFile(
                             audio_file_name, mode="w",
                             samplerate=sampling_rate, channels=1, subtype="FLOAT") as f:
@@ -870,8 +740,8 @@ class Transcriber(MultithreadContextManagerImpl):
                 s_prop.language = self.__current_language
 
                 self._invoke_callback(t.Sentence(
-                    timestamp + s[0], timestamp + s[1], "", embedding=embeddings[i], prop=s_prop).add_text(
-                    s[2], audio_file_name))
+                    timestamp + s.tm0, timestamp + s.tm1, "", embedding=s.embedding, prop=s_prop).add_text(
+                    s.text, audio_file_name))
 
     def __sentence_callback(
             self, timestamp: float, audio_data: np.ndarray | None, prop: t.AdditionalProperties | None):
@@ -885,17 +755,12 @@ class Transcriber(MultithreadContextManagerImpl):
         return ret
 
     def open(self):
-        if self.__use_remote():
-            self.__channel = grpc.insecure_channel(self.__device)
-            self.__stub = transcriber_service_pb2_grpc.TranscriberServiceStub(self.__channel)
+        self.__transcriber.open()
         super().open()
 
     def close(self):
         super().close()
-        if self.__channel is not None:
-            self.__stub = None
-            self.__channel.close()
-            self.__channel = None
+        self.__transcriber.close()
 
 
 class InitialDiarization(MultithreadContextManagerImpl):
