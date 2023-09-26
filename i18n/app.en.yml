@@ -27,6 +27,7 @@ en:
   conf_apply_desc: "The recognizer will restart when applying the settings. Recording will stop for a short period of time due to the restart."
   conf_apply: "Apply"
   conf_apply_reload: "Reloading..."
+  conf_sleep_when_not_accessed: "Suspend recording while the browser is closed or access is stopped"
   conf_enable_plugins: "Enable plugins (application will be automatically restarted to apply the settings)"
   conf_input_language: "Language of input speech"
   conf_enable_auto_detect_language: "[experimental] Enable language estimation of input speech"

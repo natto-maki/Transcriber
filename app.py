@@ -34,6 +34,7 @@ class UiConfiguration:
     show_input_status: bool = False
     show_statement_properties: bool = False
     openai_api_key: str = ""
+    sleep_when_not_accessed: bool = False
 
 
 _app_lock0 = th.Lock()
@@ -59,7 +60,7 @@ def _keep_alive():
 def _live_checker():
     while True:
         time.sleep(5.0)
-        if _app.is_opened() and _last_called + 5.0 < time.time():
+        if _ui_conf.sleep_when_not_accessed and _app.is_opened() and _last_called + 5.0 < time.time():
             with _app_lock0:
                 logging.info("closing application...")
                 _app.close()
@@ -681,7 +682,7 @@ def _pre_apply_configuration():
 
 
 def _apply_configuration(
-        f_conf_enable_plugins, f_conf_input_language,
+        f_conf_sleep_when_not_accessed, f_conf_enable_plugins, f_conf_input_language,
         f_conf_enable_auto_detect_language, f_conf_enable_simultaneous_interpretation, f_conf_output_language,
         f_conf_ui_language, f_conf_ui_show_input_status, f_conf_ui_show_statement_properties,
         f_conf_input_devices, f_conf_device,
@@ -705,6 +706,7 @@ def _apply_configuration(
     ui_conf.show_input_status = f_conf_ui_show_input_status
     ui_conf.show_statement_properties = f_conf_ui_show_statement_properties
     ui_conf.openai_api_key = f_conf_openai_api_key
+    ui_conf.sleep_when_not_accessed = f_conf_sleep_when_not_accessed
 
     conf = main.Configuration()
     conf.input_devices = f_conf_input_devices if len(f_conf_input_devices) != 0 else None
@@ -807,6 +809,8 @@ def app_main(args=None):
 
     _live_checker_thread = th.Thread(target=_live_checker)
     _live_checker_thread.start()
+    if not _ui_conf.sleep_when_not_accessed:
+        _keep_alive()
 
     with gr.Blocks(title=i18n.t("app.application_name"), css=block_css) as demo:
         f_reboot_flag = gr.Checkbox(visible=False, value=False)
@@ -856,6 +860,9 @@ def app_main(args=None):
             gr.Markdown(i18n.t('app.conf_apply_desc'))
             f_conf_apply = gr.Button(value=i18n.t('app.conf_apply'), variant="primary")
             with gr.Group():
+                f_conf_sleep_when_not_accessed = gr.Checkbox(
+                    label=i18n.t('app.conf_sleep_when_not_accessed'),
+                    value=_ui_conf.sleep_when_not_accessed)
                 f_conf_enable_plugins = gr.CheckboxGroup(
                     visible=(len(_find_plugins()) != 0),
                     label=i18n.t('app.conf_enable_plugins'),
@@ -1014,7 +1021,7 @@ def app_main(args=None):
         f_person_erase.click(
             _erase_person, [f_person_selector], [f_person_selector, f_person_list])
         f_conf_apply.click(_pre_apply_configuration, None, [f_conf_apply]).then(_apply_configuration, [
-            f_conf_enable_plugins, f_conf_input_language,
+            f_conf_sleep_when_not_accessed, f_conf_enable_plugins, f_conf_input_language,
             f_conf_enable_auto_detect_language, f_conf_enable_simultaneous_interpretation, f_conf_output_language,
             f_conf_ui_language, f_conf_ui_show_input_status, f_conf_ui_show_statement_properties,
             f_conf_input_devices, f_conf_device,

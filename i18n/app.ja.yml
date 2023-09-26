@@ -27,6 +27,7 @@ ja:
   conf_apply_desc: "設定を適用する際に認識器が再起動します。再起動のため短時間記録が停止します。"
   conf_apply: "設定を適用"
   conf_apply_reload: "再読み込みします..."
+  conf_sleep_when_not_accessed: "ブラウザを閉じている間・アクセスが止まっている間は記録を停止する"
   conf_enable_plugins: "プラグインを有効にする(設定適用のためアプリケーションを再起動します)"
   conf_input_language: "入力音声の言語"
   conf_enable_auto_detect_language: "[試験的機能] 入力音声の言語を自動で推定する"
