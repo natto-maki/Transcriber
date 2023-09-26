@@ -118,7 +118,7 @@ class AsyncCallFuture:
             return self.__result
         return on_timeout
 
-    def cancel(self, result):
+    def cancel(self, result=None):
         self.set_result(result)
 
 
