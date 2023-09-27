@@ -1,9 +1,20 @@
 # Transcriber
 
+Japanese README is [here](README.ja.md)
+
 This is an application that automatically performs audio transcription and minutes generation.
 The transcribed content is output in real time, 
 and a summary is automatically generated for a certain number of sentences.
 It can also automatically identify the speaker (experimental feature).
+
+### What's new in v0.2.0
+
+- Automatic input language detection has been implemented.<br/>
+  Settings: \[experimental\] Enable language estimation of input speech
+- Real-time translation using LLM is now available when input language is different from the output language.<br/>
+  Settings: \[experimental\] Enable real-time translation when input and output languages are different
+- Added playback of recorded audio for each sentence.
+- Several problems related to startup stoppage have been fixed.
 
 ## System overview
 
@@ -122,9 +133,6 @@ but we recommend changing the following settings from the "Settings" tab.
 
 After you have finished all the settings, press "Apply Settings" to write the settings.
 
-Restart is required because you have changed the settings that marked as reboot is required.
-After terminating the program with CTRL-C or the kill command in the terminal, run `app.py` again.
-
 
 Your setup is now complete! Enjoy the app!
 
@@ -136,9 +144,6 @@ but may be a different address or port if the application is running in a virtua
 
 You can also open the UI from another machine. 
 Note that, however, the audio recording (and playback) is only performed on the machine that invoked `app.py`.
-
-The audio transcription will only be performed while the UI is open in the browser.
-The application will go into sleep-mode when there is no longer a browser with the UI open.
 
 ### Current tab
 
@@ -198,7 +203,7 @@ Therefore, even with the settings in this section, the application itself will c
 
 ## TODOs
 
-- Implement automatic language detection
+- ~~Implement automatic language detection~~ v0.2.0
 - Try an LLM that can run on local machine
 - Support exporting history
 - Support re-analysis of history (re-running processes after speaker identification)
