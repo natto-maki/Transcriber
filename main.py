@@ -484,7 +484,7 @@ class VoiceActivityDetector(MultithreadContextManagerImpl):
         options.log_severity_level = 4
         return onnxruntime.InferenceSession(
             os.path.join(os.path.dirname(os.path.abspath(__file__)), "resources", "silero_vad.onnx"),
-            sess_options=options
+            sess_options=options, providers=["CPUExecutionProvider"]
         )
 
     def __available_frames(self):
