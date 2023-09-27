@@ -1,6 +1,7 @@
 # Transcriber
 
-Japanese README is [here](README.ja.md)
+Japanese README is [here](README.ja.md)<br/>
+日本語のREADMEは[こちら](README.ja.md)です。
 
 This is an application that automatically performs audio transcription and minutes generation.
 The transcribed content is output in real time, 
