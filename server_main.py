@@ -22,7 +22,10 @@ from pyannote.audio import Model
 # noinspection PyPackageRequirements
 from pyannote.audio import Inference
 
-sampling_rate = 16000
+import common
+import transcriber_hack
+
+sampling_rate = common.sampling_rate
 
 
 class Servicer(transcriber_service_pb2_grpc.TranscriberServiceServicer):
@@ -67,6 +70,15 @@ class Servicer(transcriber_service_pb2_grpc.TranscriberServiceServicer):
         finally:
             self.mutex.release()
 
+    def DetectLanguage(self, request, context):
+        self.mutex.acquire()
+        try:
+            audio_data = np.frombuffer(request.audio_data, dtype=np.float32)
+            return transcriber_service_pb2.DetectLanguageResponse(
+                detected_languages=json.dumps(transcriber_hack.detect_language(self.model, audio_data)))
+        finally:
+            self.mutex.release()
+
 
 def serve():
     port = "7860"
@@ -79,5 +91,6 @@ def serve():
 
 
 if __name__ == "__main__":
-    logging.basicConfig()
+    logging.basicConfig(
+        format='%(asctime)s: %(name)s:%(funcName)s:%(lineno)d %(levelname)s: %(message)s', level=logging.WARNING)
     serve()

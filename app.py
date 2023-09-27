@@ -10,6 +10,7 @@ import locale
 import dataclasses
 import re
 import concurrent.futures
+import signal
 
 # noinspection PyPackageRequirements
 import i18n
@@ -18,6 +19,8 @@ import numpy as np
 import openai
 import sounddevice as sd
 import soundfile as sf
+# noinspection PyPackageRequirements
+import iso639
 
 import tools
 import main_types as t
@@ -30,9 +33,12 @@ import transcriber_plugin as pl
 class UiConfiguration:
     language: str = "auto"
     show_input_status: bool = False
+    show_statement_properties: bool = False
     openai_api_key: str = ""
+    sleep_when_not_accessed: bool = False
 
 
+_stop = False
 _app_lock0 = th.Lock()
 _app: main.Application | None = None
 _conf: main.Configuration | None = None
@@ -46,7 +52,7 @@ def _keep_alive():
     global _last_called
 
     _last_called = time.time()
-    if not _app.is_opened():
+    if not _stop and not _app.is_opened():
         with _app_lock0:
             logging.info("opening application...")
             _app.open()
@@ -56,7 +62,7 @@ def _keep_alive():
 def _live_checker():
     while True:
         time.sleep(5.0)
-        if _app.is_opened() and _last_called + 5.0 < time.time():
+        if _ui_conf.sleep_when_not_accessed and _app.is_opened() and _last_called + 5.0 < time.time():
             with _app_lock0:
                 logging.info("closing application...")
                 _app.close()
@@ -72,6 +78,15 @@ def _restart(conf: main.Configuration):
         _app = main.Application(conf, _ui_conf.language)
         _conf = _app.get_current_configuration()
         logging.info("application restarted")
+
+
+def _reboot():
+    global _app, _conf
+    with _app_lock0:
+        logging.info("rebooting...")
+        if _app.is_opened():
+            _app.close()
+        os.execv(sys.executable, ["python3"] + sys.argv)
 
 
 block_css = '''\
@@ -98,8 +113,15 @@ main.personList {
   flex: 1;
   overflow: auto;
 }
+table.history tr td {
+  border-bottom: 1px solid #808080 !important;
+}
+table.personList tr td {
+  border-bottom: 1px solid #808080 !important;
+}
 table.sentences {
   width: 100%;
+  margin-bottom: 0px !important;
 }
 table.sentences tr {
 }
@@ -111,6 +133,12 @@ table.sentences tr td.control {
   border-bottom: 0px solid transparent !important;
   padding: 2px 0px !important;
   text-align: right !important;
+}
+table.sentences tr td.sys_language_detected {
+  background-color: var(--primary-500);
+  padding: 2px 6px !important;
+  border-top: 8px solid transparent !important;
+  border-bottom: 8px solid transparent !important;
 }
 span.talker {
   color: #808080 !important;
@@ -128,6 +156,20 @@ span.status {
 span.suppressed {
   color: #808080 !important;
 }
+span.processing {
+  color: #A0A0A0 !important;
+}
+span.interpretation {
+  color: var(--primary-200) !important;
+}
+span.playback_audio {
+}
+span.playback_audio:hover {
+  background: rgba(255,255,255,.4);
+}
+span.playback_audio:active {
+  background: rgba(255,255,255,.8);
+}
 img.playback_audio_base {
   width: 24px;
   height: 24px;
@@ -141,7 +183,7 @@ img.playback_audio_base {
 img.playback_audio {
 }
 img.playback_audio:hover {
-  background: rgba(255,255,255,.2);
+  background: rgba(255,255,255,.4);
 }
 img.playback_audio:active {
   background: rgba(255,255,255,.8);
@@ -151,11 +193,11 @@ img.playback_audio:active {
 text_table_header = '''\
 <main class="current">
 <section class="historyBlock">
-<table width="100%%">
+<table class="history" width="100%%">
 <tr>
 <th width="60px">%(time)s</th>
-<th>%(summary)s</th>
-<th width="40%%">%(conversation)s</th>
+<th width="calc(45%% - 60px)">%(summary)s</th>
+<th width="55%%">%(conversation)s</th>
 </tr>
 '''
 
@@ -175,11 +217,11 @@ move_to_last_js = '''\
 history_text_table_header = '''\
 <main class="history">
 <section class="historyBlock">
-<table width="100%%">
+<table class="history" width="100%%">
 <tr>
 <th width="60px">%(time)s</th>
-<th width="calc(60%% - 60px)">%(summary)s</th>
-<th width="40%%">%(conversation)s</th>
+<th width="calc(45%% - 60px)">%(summary)s</th>
+<th width="55%%">%(conversation)s</th>
 </tr>
 '''
 
@@ -192,7 +234,7 @@ history_text_table_footer = '''\
 person_list_table_header = '''\
 <main class="personList">
 <section class="historyBlock">
-<table width="100%%">
+<table class="personList" width="100%%">
 <tr>
 <th width="20%%">%(person_id)s</th>
 <th width="25%%">%(superseded_by)s</th>
@@ -208,26 +250,51 @@ person_list_table_footer = '''\
 '''
 
 
+def _can_be_merged(s0: t.Sentence, s1: t.Sentence):
+    if s0.person_id == -1 or s0.person_id != s1.person_id:
+        return False
+    if s0.si_state is None and s1.si_state is None:
+        return True
+    if s0.si_state is None or s1.si_state is None:
+        return False
+    return True
+
+
 def _merge_sentences(sentences: list[t.Sentence], merge_interval=10.0):
     ret: list[t.Sentence] = []
     for s in sentences:
-        if s.person_id != -1 and len(ret) != 0 and ret[-1].person_id == s.person_id and \
-                ret[-1].tm1 + merge_interval > s.tm0:
+        if len(ret) != 0:
             s0 = ret[-1]
-            s0.text += " " + s.text
-            s0.tm1 = s.tm1
-            if s.prop is not None and s.prop.audio_file_name_list is not None:
-                if s0.prop is None:
-                    s0.prop = t.AdditionalProperties()
-                for name in s.prop.audio_file_name_list:
-                    s0.prop.append_audio_file(name)
-        else:
-            ret.append(s.clone())
+            if s0.tm1 + merge_interval > s.tm0 and _can_be_merged(s0, s):
+                s0.merge(s)
+                continue
+        ret.append(s.clone())
+    return ret
+
+
+def _merge_sentences_with_no_embeddings(sentences: list[t.Sentence], merge_interval=10.0):
+    ret: list[t.Sentence] = []
+    for s in sentences:
+        if s.sentence_type == t.SentenceType.Sentence and len(ret) != 0:
+            s0 = ret[-1]
+            if s0.sentence_type == t.SentenceType.Sentence and s0.tm1 + merge_interval > s.tm0:
+                s0.merge(s)
+                continue
+        ret.append(s.clone())
     return ret
 
 
 _playback_audio_file_template = '''\
 <img src="file/resources/playback_audio.png" class="playback_audio_base playback_audio"
+  onclick='fetch("/api/playback_audio/", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({data: ["%(audio_file_names)s"]})
+  });'>
+'''
+
+_playback_audio_file_template_for_span = '''\
+<span class="playback_audio"
   onclick='fetch("/api/playback_audio/", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
@@ -268,32 +335,124 @@ def _playback_audio(files):
     _playback_audio_executor.submit(_playback_audio_task, files)
 
 
-def _output_sentences(sentences: list[t.Sentence], show_timestamp=False):
-    if len([None for s in sentences if s.embedding is not None]) == 0:
-        return html.escape(" ".join([s.text for s in sentences]))
+def _get_valid_audio_files(s: t.Sentence) -> list[str] | None:
+    if s.prop is None or s.prop.audio_file_name_list is None:
+        return None
+    ret = [name for name in s.prop.audio_file_name_list if os.path.isfile(name)]
+    return ret if len(ret) != 0 else None
+
+
+def _has_sentence_specific_properties(s: t.Sentence):
+    return s.embedding is not None or _get_valid_audio_files(s) is not None
+
+
+def _has_inline_playback(s: t.Sentence):
+    return s.prop is not None and \
+        s.prop.audio_file_name_list is not None and len(s.prop.audio_file_name_list) != 0 and \
+        s.prop.audio_file_prop_list is not None and \
+        len(s.prop.audio_file_name_list) == len(s.prop.audio_file_prop_list)
+
+
+def _render_text(s: t.Sentence, length_limit: int | None = None) -> str:
+    if not _has_inline_playback(s):
+        return html.escape(s.text)
+
+    if length_limit is None:
+        length_limit = len(s.text)
 
     out = []
-    for i, s in enumerate(_merge_sentences(sentences)):
-        s_person_name = html.escape(s.person_name) if s.person_id != -1 else t.unknown_person_display_name
+    audio_index = 0
+    offset = 0
+    while offset < length_limit and audio_index < len(s.prop.audio_file_prop_list):
+        name = s.prop.audio_file_name_list[audio_index]
+        prop = s.prop.audio_file_prop_list[audio_index]
+        audio_index += 1
+
+        if prop is None:
+            continue
+        if offset < prop.offset:
+            out.append(html.escape(s.text[offset:prop.offset]))
+            offset = prop.offset
+            if offset >= length_limit:
+                break
+
+        is_valid = os.path.isfile(name)
+        if is_valid:
+            out.append(_playback_audio_file_template_for_span % {"audio_file_names": name})
+        offset = prop.offset + prop.length
+        out.append(html.escape(s.text[prop.offset:offset]))
+        if is_valid:
+            out.append("</span>")
+
+    if offset < length_limit:
+        out.append(html.escape(s.text[offset:length_limit]))
+
+    return "".join(out)
+
+
+def _get_language_name(code: str) -> str:
+    key = "lang." + code
+    name = i18n.t(key)
+    if name != key:
+        return name
+    try:
+        return iso639.Lang(code).name
+    except Exception as ex:
+        _ = ex
+        return "?Unknown"
+
+
+def _output_sentences(sentences: list[t.Sentence], show_properties=False):
+    has_embedding = (len([None for s in sentences if s.embedding is not None]) != 0)
+    out = []
+    for s in (_merge_sentences(sentences) if has_embedding else _merge_sentences_with_no_embeddings(sentences)):
+        if s.sentence_type == t.SentenceType.SentenceSeparator:
+            continue
 
         s_audio_file = None
-        if s.prop is not None and s.prop.audio_file_name_list is not None:
-            valid_files = [name for name in s.prop.audio_file_name_list if os.path.isfile(name)]
-            if len(valid_files) != 0:
+        if not _has_inline_playback(s):
+            valid_files = _get_valid_audio_files(s)
+            if valid_files is not None:
                 s_audio_file = _playback_audio_file_template % {"audio_file_names": ",".join(valid_files)}
 
-        out.append("<tr><td>" if s_audio_file is not None else "<tr><td colspan=\"2\">")
-        if show_timestamp:
+        s_td_class = ""
+        if s.sentence_type == t.SentenceType.LanguageDetected:
+            s_td_class = " class=\"sys_language_detected\""
+
+        s_talker = ""
+        if has_embedding:
+            s_talker = "<span class=\"talker\">%s</span>" % (
+                html.escape(s.person_name) if s.person_id != -1 else t.unknown_person_display_name)
+
+        if s.si_state is None:
+            s_rendered_text = _render_text(s)
+        else:
+            s_text = " ".join(s.si_state.processed_org)
+            s_processing = " ".join([text for text in [s.si_state.processing] + s.si_state.waiting if text != ""])
+            s_interpretation = s.si_state.processed_int
+            s_rendered_text = "%s%s%s" % (
+                _render_text(s, len(s_text)),
+                " <span class=\"processing\">" + html.escape(s_processing) + "</span>"
+                if s_processing != "" else "",
+                "<br/><span class=\"interpretation\">" + html.escape(s_interpretation) + "</span>"
+                if s_interpretation != "" else "")
+
+        out.append(("<tr><td%s>" if s_audio_file is not None else "<tr><td%s colspan=\"2\">") % s_td_class)
+
+        if s.sentence_type == t.SentenceType.LanguageDetected:
+            out.append(i18n.t('app.text_language_detected') % {
+                "old_language": _get_language_name(s.payload["old_language"]),
+                "new_language": _get_language_name(s.payload["new_language"])})
+        elif show_properties:
             s_tm = time.localtime(s.tm0)
             s_prop = _output_properties(s.prop) if s.prop is not None else ""
             out.append(
-                "<span class=\"talker\">%s</span>  "
-                "<span class=\"talkerExtra\">%02d:%02d.%02d%s</span><br/>%s" %
-                (s_person_name, s_tm.tm_hour, s_tm.tm_min, s_tm.tm_sec, s_prop, html.escape(s.text)))
+                "%s<span class=\"talkerExtra\">%02d:%02d.%02d%s</span><br/>%s" % (
+                    s_talker + "  " if s_talker != "" else "", s_tm.tm_hour, s_tm.tm_min, s_tm.tm_sec, s_prop,
+                    s_rendered_text))
         else:
-            out.append(
-                "<span class=\"talker\">%s</span><br/>%s" %
-                (s_person_name, html.escape(s.text)))
+            out.append("%s%s" % (s_talker + "<br/>" if s_talker != "" else "", s_rendered_text))
+
         out.append("</td>")
         if s_audio_file is not None:
             out.append("<td class=\"control\" width=\"32px\">%s</td>" % s_audio_file)
@@ -325,9 +484,11 @@ def _output_text(reader, include_anker=False):
         if g.qualified is None:
             if g.state == t.SENTENCE_QUALIFY_ERROR:
                 text += "<td><span class=\"error\">%s</span></td>" % i18n.t("app.text_error_in_qualifying")
-                text += "<td><small>%s</small></td>" % _output_sentences(g.sentences)
+                text += "<td>%s</td>" % _output_sentences(
+                    g.sentences, show_properties=_ui_conf.show_statement_properties)
             else:
-                text += "<td colspan=\"2\">%s</td>" % _output_sentences(g.sentences)
+                text += "<td colspan=\"2\">%s</td>" % _output_sentences(
+                    g.sentences, show_properties=_ui_conf.show_statement_properties)
 
         else:
             if g.state == t.SENTENCE_QUALIFY_ERROR:
@@ -343,8 +504,9 @@ def _output_text(reader, include_anker=False):
             else:
                 text += "<td>...</td>"
 
-            text += "<td><small>%s</small></td>" % _output_sentences(
-                g.qualified.corrected_sentences, show_timestamp=False)
+            # "<td><small>%s</small></td>"
+            text += "<td>%s</td>" % _output_sentences(
+                g.qualified.corrected_sentences, show_properties=_ui_conf.show_statement_properties)
 
         text += "</tr>"
 
@@ -363,6 +525,12 @@ def _interval_update():
         additional_rows += "input: latency %.3fs, peak %.1fdB, RMS %.1fdB, %s%s<br/>" % (
             m.latency, m.peak_db, m.rms_db, "active" if m.woke else "sleep",
             ":VAD(max %.2f, ave %.2f)" % (m.vad_max, m.vad_ave) if m.woke else "")
+        if _conf.enable_auto_detect_language:
+            m = _app.ref_language_detection_state()
+            additional_rows += "language: current \"%s\", guard_period %d, prob {%s}" % (
+                m.current_language, m.guard_period, " ".join([
+                    "\"%s\":%.2f" % (name, prob)
+                    for name, prob in sorted(m.language_probs.items(), key=lambda e_: -e_[1])[:5]]))
         additional_rows += "</span></td></tr>"
 
     return text_table_header % {
@@ -522,8 +690,9 @@ def _pre_apply_configuration():
 
 
 def _apply_configuration(
-        f_conf_enable_plugins, f_conf_input_language, f_conf_output_language,
-        f_conf_ui_language, f_conf_ui_show_input_status,
+        f_conf_sleep_when_not_accessed, f_conf_enable_plugins, f_conf_input_language,
+        f_conf_enable_auto_detect_language, f_conf_enable_simultaneous_interpretation, f_conf_output_language,
+        f_conf_ui_language, f_conf_ui_show_input_status, f_conf_ui_show_statement_properties,
         f_conf_input_devices, f_conf_device,
         f_conf_vad_threshold, f_conf_vad_pre_hold, f_conf_vad_post_hold, f_conf_vad_post_apply,
         f_conf_vad_soft_limit_length, f_conf_vad_hard_limit_length,
@@ -543,12 +712,16 @@ def _apply_configuration(
     ui_conf: UiConfiguration = dataclasses.replace(_ui_conf)
     ui_conf.language = f_conf_ui_language
     ui_conf.show_input_status = f_conf_ui_show_input_status
+    ui_conf.show_statement_properties = f_conf_ui_show_statement_properties
     ui_conf.openai_api_key = f_conf_openai_api_key
+    ui_conf.sleep_when_not_accessed = f_conf_sleep_when_not_accessed
 
     conf = main.Configuration()
     conf.input_devices = f_conf_input_devices if len(f_conf_input_devices) != 0 else None
     conf.device = f_conf_device
     conf.language = f_conf_input_language
+    conf.enable_auto_detect_language = f_conf_enable_auto_detect_language
+    conf.enable_simultaneous_interpretation = f_conf_enable_simultaneous_interpretation
 
     conf.vad_threshold = f_conf_vad_threshold
     conf.vad_pre_hold = f_conf_vad_pre_hold
@@ -587,6 +760,12 @@ def _apply_configuration(
 
     conf.disabled_plugins = [plugin for plugin in _find_plugins() if plugin not in f_conf_enable_plugins]
 
+    reboot_required = (
+        _ui_conf.language != ui_conf.language or
+        _ui_conf.openai_api_key != ui_conf.openai_api_key or
+        _conf.disabled_plugins != conf.disabled_plugins
+    )
+
     _ui_conf = ui_conf
     _restart(conf)
     with tools.SafeWrite(os.path.join(main.data_dir_name, "config.pickle"), "wb") as f:
@@ -594,7 +773,16 @@ def _apply_configuration(
     with tools.SafeWrite(os.path.join(main.data_dir_name, "ui_config.pickle"), "wb") as f:
         pickle.dump({"conf": ui_conf}, f.stream)
 
-    return gr.Button.update(interactive=True)
+    return gr.Button.update(
+        interactive=not reboot_required,
+        value=i18n.t('app.conf_apply_reload') if reboot_required else i18n.t('app.conf_apply')
+    ), reboot_required
+
+
+def _post_apply_configuration(f_reboot_flag):
+    if f_reboot_flag:
+        logging.info("Reboot requested due to configuration changes")
+        _reboot()
 
 
 def _load_configuration():
@@ -629,8 +817,12 @@ def app_main(args=None):
 
     _live_checker_thread = th.Thread(target=_live_checker)
     _live_checker_thread.start()
+    if not _ui_conf.sleep_when_not_accessed:
+        _keep_alive()
 
     with gr.Blocks(title=i18n.t("app.application_name"), css=block_css) as demo:
+        f_reboot_flag = gr.Checkbox(visible=False, value=False)
+
         f_api_playback_audio = gr.Button(visible=False)
         f_api_playback_audio_files = gr.Textbox(visible=False)
         f_api_playback_audio.click(_playback_audio, [f_api_playback_audio_files], None, api_name="playback_audio")
@@ -676,6 +868,9 @@ def app_main(args=None):
             gr.Markdown(i18n.t('app.conf_apply_desc'))
             f_conf_apply = gr.Button(value=i18n.t('app.conf_apply'), variant="primary")
             with gr.Group():
+                f_conf_sleep_when_not_accessed = gr.Checkbox(
+                    label=i18n.t('app.conf_sleep_when_not_accessed'),
+                    value=_ui_conf.sleep_when_not_accessed)
                 f_conf_enable_plugins = gr.CheckboxGroup(
                     visible=(len(_find_plugins()) != 0),
                     label=i18n.t('app.conf_enable_plugins'),
@@ -686,6 +881,12 @@ def app_main(args=None):
                     label=i18n.t('app.conf_input_language'),
                     multiselect=False, allow_custom_value=False,
                     choices=["en", "ja"], value=_conf.language)
+                f_conf_enable_auto_detect_language = gr.Checkbox(
+                    label=i18n.t('app.conf_enable_auto_detect_language'),
+                    value=_conf.enable_auto_detect_language)
+                f_conf_enable_simultaneous_interpretation = gr.Checkbox(
+                    label=i18n.t('app.conf_enable_simultaneous_interpretation'),
+                    value=_conf.enable_simultaneous_interpretation)
                 f_conf_output_language = gr.Dropdown(
                     label=i18n.t('app.conf_output_language'),
                     multiselect=False, allow_custom_value=False,
@@ -705,6 +906,9 @@ def app_main(args=None):
                 f_conf_ui_show_input_status = gr.Checkbox(
                     label=i18n.t('app.conf_ui_show_input_status'),
                     value=_ui_conf.show_input_status)
+                f_conf_ui_show_statement_properties = gr.Checkbox(
+                    label=i18n.t('app.conf_ui_show_statement_properties'),
+                    value=_ui_conf.show_statement_properties)
                 f_conf_device = gr.Dropdown(
                     label=i18n.t('app.conf_device'),
                     multiselect=False, allow_custom_value=True,
@@ -786,10 +990,10 @@ def app_main(args=None):
                 with gr.Accordion(i18n.t('app.conf_qualify_group'), open=False):
                     f_conf_qualify_soft_limit = gr.Slider(
                         label=i18n.t('app.conf_qualify_soft_limit'),
-                        minimum=60.0, maximum=600.0, value=_conf.qualify_soft_limit, step=10.0)
+                        minimum=30.0, maximum=600.0, value=_conf.qualify_soft_limit, step=10.0)
                     f_conf_qualify_hard_limit = gr.Slider(
                         label=i18n.t('app.conf_qualify_hard_limit'),
-                        minimum=60.0, maximum=600.0, value=_conf.qualify_hard_limit, step=10.0)
+                        minimum=30.0, maximum=600.0, value=_conf.qualify_hard_limit, step=10.0)
                     f_conf_qualify_silent_interval = gr.Slider(
                         label=i18n.t('app.conf_qualify_silent_interval'),
                         minimum=1.0, maximum=60.0, value=_conf.qualify_silent_interval, step=1.0)
@@ -825,8 +1029,9 @@ def app_main(args=None):
         f_person_erase.click(
             _erase_person, [f_person_selector], [f_person_selector, f_person_list])
         f_conf_apply.click(_pre_apply_configuration, None, [f_conf_apply]).then(_apply_configuration, [
-            f_conf_enable_plugins, f_conf_input_language, f_conf_output_language,
-            f_conf_ui_language, f_conf_ui_show_input_status,
+            f_conf_sleep_when_not_accessed, f_conf_enable_plugins, f_conf_input_language,
+            f_conf_enable_auto_detect_language, f_conf_enable_simultaneous_interpretation, f_conf_output_language,
+            f_conf_ui_language, f_conf_ui_show_input_status, f_conf_ui_show_statement_properties,
             f_conf_input_devices, f_conf_device,
             f_conf_vad_threshold, f_conf_vad_pre_hold, f_conf_vad_post_hold, f_conf_vad_post_apply,
             f_conf_vad_soft_limit_length, f_conf_vad_hard_limit_length,
@@ -838,19 +1043,46 @@ def app_main(args=None):
             f_conf_qualify_soft_limit, f_conf_qualify_hard_limit, f_conf_qualify_silent_interval,
             f_conf_qualify_merge_interval, f_conf_qualify_merge_threshold,
             f_conf_qualify_llm_model_name_step1, f_conf_qualify_llm_model_name_step2,
-            *f_conf_args], [f_conf_apply])
+            *f_conf_args], [f_conf_apply, f_reboot_flag]).then(
+            _post_apply_configuration, [f_reboot_flag], None,
+            _js="(reboot) => reboot ? window.setTimeout(function() { window.location.reload() }, 5000) : 0")
 
-        demo.load(_interval_update, None, [f_text], every=2)
+        demo.load(_interval_update, None, [f_text], every=1)
 
     demo.queue().launch(server_name="0.0.0.0")  # TODO network opts
 
 
+def _log_filter(record):
+    if record.name == "httpx":
+        return False
+    if record.name == "faster_whisper" and record.msg.startswith("Processing audio with duration"):
+        return False
+    return True
+
+
+def _sigint_handler(signum, frame):
+    global _stop, _app
+    _ = signum
+    _ = frame
+    try:
+        logging.info("SIGINT received, closing application...")
+        _stop = True
+        if _app is not None and _app.is_opened():
+            _app.close()
+        logging.info("application closed")
+    except Exception as ex:
+        _ = ex
+    signal.raise_signal(signal.SIGTERM)
+
+
 if __name__ == '__main__':
+    signal.signal(signal.SIGINT, _sigint_handler)
+
     _ui_conf = _load_ui_configuration()
 
     logging.basicConfig(
         format='%(asctime)s: %(name)s:%(funcName)s:%(lineno)d %(levelname)s: %(message)s', level=logging.INFO)
-    logging.getLogger().handlers[0].addFilter(lambda record: record.name != "httpx")
+    logging.getLogger().handlers[0].addFilter(lambda record: _log_filter(record))
 
     language_code = _ui_conf.language
     if language_code == "auto":
