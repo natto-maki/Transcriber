@@ -16,6 +16,11 @@ It can also automatically identify the speaker (experimental feature).
 - Added playback of recorded audio for each sentence.
 - Several problems related to startup stoppage have been fixed.
 
+<img width="400" alt="screenshot0" src="https://github.com/natto-maki/Transcriber/assets/145577363/7284e9b3-2adb-46d7-b230-28fde2ebe238">
+<img width="400" alt="screenshot1" src="https://github.com/natto-maki/Transcriber/assets/145577363/c800597b-11aa-4ce5-821b-c1bf0b4b9045">
+<img width="400" alt="screenshot2" src="https://github.com/natto-maki/Transcriber/assets/145577363/0dff60f4-a2f2-42d1-ad8c-9bb331eb2c0f">
+
+
 ## System overview
 
 - For the VAD that detects human voices, it is using [Silero VAD](https://github.com/snakers4/silero-vad).
