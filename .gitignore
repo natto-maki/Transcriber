@@ -162,4 +162,4 @@ cython_debug/
 # App specific settings
 data/
 pretrained_models/
-
+*.gguf
