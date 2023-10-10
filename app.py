@@ -699,7 +699,7 @@ def _apply_configuration(
         f_conf_vad_wakeup_peak_threshold_db, f_conf_vad_wakeup_release,
         f_conf_embedding_type, f_conf_transcribe_min_duration, f_conf_transcribe_min_segment_duration,
         f_conf_keep_audio_file, f_conf_keep_audio_file_for,
-        f_conf_max_hold_embeddings,
+        f_conf_reduce_embeddings_threshold_size,
         f_conf_openai_api_key,
         f_conf_qualify_soft_limit, f_conf_qualify_hard_limit, f_conf_qualify_silent_interval,
         f_conf_qualify_merge_interval, f_conf_qualify_merge_threshold,
@@ -743,8 +743,13 @@ def _apply_configuration(
         emb_c.dbscan_min_samples = f_conf_args.pop(0)
         emb_c.min_matched_embeddings_to_inherit_cluster = f_conf_args.pop(0)
         emb_c.min_matched_embeddings_to_match_person = f_conf_args.pop(0)
+        emb_c.preferred_cluster_size = f_conf_args.pop(0)
+        emb_c.preferred_cluster_size_scale = f_conf_args.pop(0)
+        emb_c.distance_threshold_for_cluster = f_conf_args.pop(0)
+        emb_c.preferred_person_size = f_conf_args.pop(0)
+        emb_c.distance_threshold_for_person = f_conf_args.pop(0)
 
-    conf.max_hold_embeddings = int(f_conf_max_hold_embeddings)
+    conf.reduce_embeddings_threshold_size = int(f_conf_reduce_embeddings_threshold_size)
 
     conf.qualify_soft_limit = f_conf_qualify_soft_limit
     conf.qualify_hard_limit = f_conf_qualify_hard_limit
@@ -759,6 +764,8 @@ def _apply_configuration(
     )
 
     conf.disabled_plugins = [plugin for plugin in _find_plugins() if plugin not in f_conf_enable_plugins]
+
+    assert len(f_conf_args) == 0
 
     reboot_required = (
         _ui_conf.language != ui_conf.language or
@@ -980,10 +987,25 @@ def app_main(args=None):
                                     label=i18n.t('app.conf_emb_min_matched_embeddings_to_match_person'),
                                     minimum=2.0, maximum=10.0,
                                     value=emb_c.min_matched_embeddings_to_match_person, step=1.0),
+                                gr.Slider(
+                                    label=i18n.t('app.conf_emb_preferred_cluster_size'),
+                                    minimum=10.0, maximum=500.0, value=emb_c.preferred_cluster_size, step=10.0),
+                                gr.Slider(
+                                    label=i18n.t('app.conf_emb_preferred_cluster_size_scale'),
+                                    minimum=0.0, maximum=0.9, value=emb_c.preferred_cluster_size_scale, step=0.01),
+                                gr.Slider(
+                                    label=i18n.t('app.conf_emb_distance_threshold_for_cluster'),
+                                    minimum=0.01, maximum=0.9, value=emb_c.distance_threshold_for_cluster, step=0.01),
+                                gr.Slider(
+                                    label=i18n.t('app.conf_emb_preferred_person_size'),
+                                    minimum=10.0, maximum=500.0, value=emb_c.preferred_person_size, step=10.0),
+                                gr.Slider(
+                                    label=i18n.t('app.conf_emb_distance_threshold_for_person'),
+                                    minimum=0.01, maximum=0.9, value=emb_c.distance_threshold_for_person, step=0.01),
                             ]
-                    f_conf_max_hold_embeddings = gr.Slider(
-                        label=i18n.t('app.conf_max_hold_embeddings'),
-                        minimum=5.0, maximum=100.0, value=float(_conf.max_hold_embeddings), step=1.0)
+                    f_conf_reduce_embeddings_threshold_size = gr.Slider(
+                        label=i18n.t('app.conf_reduce_embeddings_threshold_size'),
+                        minimum=0.0, maximum=30000.0, value=_conf.reduce_embeddings_threshold_size, step=1000.0)
             with gr.Group():
                 f_conf_openai_api_key = gr.Textbox(
                     label=i18n.t("app.conf_openai_api_key"), type="password", value=_ui_conf.openai_api_key)
@@ -1038,7 +1060,7 @@ def app_main(args=None):
             f_conf_vad_wakeup_peak_threshold_db, f_conf_vad_wakeup_release,
             f_conf_embedding_type, f_conf_transcribe_min_duration, f_conf_transcribe_min_segment_duration,
             f_conf_keep_audio_file, f_conf_keep_audio_file_for,
-            f_conf_max_hold_embeddings,
+            f_conf_reduce_embeddings_threshold_size,
             f_conf_openai_api_key,
             f_conf_qualify_soft_limit, f_conf_qualify_hard_limit, f_conf_qualify_silent_interval,
             f_conf_qualify_merge_interval, f_conf_qualify_merge_threshold,
