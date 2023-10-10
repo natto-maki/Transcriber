@@ -14,6 +14,7 @@ import i18n
 
 import main_types as t
 import tools
+import llm_tools
 
 implied_tokens_per_request = 3
 
@@ -228,22 +229,8 @@ def _qualify_p2_system(opt: QualifyOptions):
     }
 
 
-def _get_name(s: t.Sentence):
-    return s.person_name if s.person_id != -1 else t.unknown_person_name
-
-
-def _aggregate_sentences_no_embeddings(sentences: list[t.Sentence]):
-    return " ".join([s.text for s in sentences if s.sentence_type == t.SentenceType.Sentence])
-
-
-def _aggregate_sentences_with_embeddings(sentences: list[t.Sentence]):
-    return "\n".join([
-        _get_name(s) + ": " + s.text.replace("\n", "\n  ")
-        for s in sentences if s.sentence_type == t.SentenceType.Sentence])
-
-
 def _correct_sentences_no_embeddings(sentences: list[t.Sentence], model_name: str, opt: QualifyOptions) -> str:
-    text = _aggregate_sentences_no_embeddings(sentences)
+    text = llm_tools.aggregate_sentences_no_embeddings(sentences)
     if len(text) == 0:
         return ""
 
@@ -258,7 +245,7 @@ def _correct_sentences_no_embeddings(sentences: list[t.Sentence], model_name: st
 def _correct_sentences_with_embeddings(
         sentences: list[t.Sentence], model_name: str, opt: QualifyOptions) -> list[t.Sentence]:
 
-    text = _aggregate_sentences_with_embeddings(sentences)
+    text = llm_tools.aggregate_sentences_with_embeddings(sentences)
     if len(text) == 0:
         return []
 
@@ -267,7 +254,7 @@ def _correct_sentences_with_embeddings(
         {"role": "user", "content": text}
     ]
 
-    name_to_id = {_get_name(s): s.person_id for s in sentences if s.person_id != -1}
+    name_to_id = {llm_tools.get_name(s): s.person_id for s in sentences if s.person_id != -1}
 
     def _post_process(r0_):
         r1_ = re.findall(r"([^:]+): (.+)\n*", r0_)
@@ -281,7 +268,7 @@ def _correct_sentences_with_embeddings(
 
 
 def _summarize_sub(sentences: list[t.Sentence] | str, model_name: str, prompt: str) -> tuple[str, list[str]]:
-    text = _aggregate_sentences_with_embeddings(sentences) if isinstance(sentences, list) else sentences
+    text = llm_tools.aggregate_sentences_with_embeddings(sentences) if isinstance(sentences, list) else sentences
     if len(text) == 0:
         return "", []
 
