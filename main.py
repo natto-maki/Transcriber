@@ -1209,7 +1209,7 @@ class Application:
             "dbscan_min_samples": ec.dbscan_min_samples,
             "min_matched_embeddings_to_inherit_cluster": ec.min_matched_embeddings_to_inherit_cluster,
             "min_matched_embeddings_to_match_person": ec.min_matched_embeddings_to_match_person,
-            "max_hold_embeddings": c.max_hold_embeddings
+            # "max_hold_embeddings": c.max_hold_embeddings  # TODO temp
         }
 
     @staticmethod

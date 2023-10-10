@@ -57,6 +57,11 @@ def _embedding_hash(x):
     return np.average(x, axis=1)
 
 
+def _cosine_distance_mat(emb):
+    n = 1 / np.fmax(sys.float_info.epsilon, np.linalg.norm(emb, axis=1))
+    return np.fmax(0.0, 1.0 - (emb @ np.transpose(emb)) * n * np.reshape(n, [-1, 1]))
+
+
 @dataclasses.dataclass
 class _Cluster:
     cluster_id: int = -1
@@ -106,7 +111,9 @@ class EmbeddingDatabase:
                  threshold=0.7, dbscan_eps=0.65, dbscan_min_samples=3,
                  min_matched_embeddings_to_inherit_cluster=3,
                  min_matched_embeddings_to_match_person=3,
-                 max_hold_embeddings=40):
+                 reduce_embeddings_threshold_size=0,
+                 preferred_cluster_size=100, preferred_cluster_size_scale=0.75, distance_threshold_for_cluster=0.1,
+                 preferred_person_size=100, distance_threshold_for_person=0.1):
 
         self.__embedding_dim = embedding_dim
         self.__database_file_name = database_file_name
@@ -115,7 +122,12 @@ class EmbeddingDatabase:
         self.__dbscan_min_samples = dbscan_min_samples
         self.__min_matched_embeddings_to_inherit_cluster = min_matched_embeddings_to_inherit_cluster
         self.__min_matched_embeddings_to_match_person = min_matched_embeddings_to_match_person
-        self.__max_hold_embeddings = max_hold_embeddings  # TODO implement quota
+        self.__reduce_embeddings_threshold_size = reduce_embeddings_threshold_size
+        self.__preferred_cluster_size = preferred_cluster_size
+        self.__preferred_cluster_size_scale = preferred_cluster_size_scale
+        self.__distance_threshold_for_cluster = distance_threshold_for_cluster
+        self.__preferred_person_size = preferred_person_size
+        self.__distance_threshold_for_person = distance_threshold_for_person
 
         self.__lock0 = th.Lock()
         self.__clusters: dict[int, _Cluster] = {}
@@ -156,8 +168,7 @@ class EmbeddingDatabase:
 
     @staticmethod
     def __metrics_mat(emb):
-        n = 1 / np.fmax(sys.float_info.epsilon, np.linalg.norm(emb, axis=1))
-        return np.fmax(0.0, 1.0 - (emb @ np.transpose(emb)) * n * np.reshape(n, [-1, 1]))
+        return _cosine_distance_mat(emb)
 
     @staticmethod
     def __find_nearest(target, emb):
@@ -245,8 +256,10 @@ class EmbeddingDatabase:
             for p in self.__persons.values():
                 _push_embeddings(p.core_embeddings, -3, True)
 
-    def __get_all_embeddings_x(self):
+    def __get_all_embeddings_x(self, include_person=False):
         emb_count = self.__count_all_embeddings()
+        if include_person:
+            emb_count += self.__count_all_person_embeddings()
 
         x0 = np.zeros((emb_count, self.__embedding_dim), dtype=np.float32)
 
@@ -256,7 +269,7 @@ class EmbeddingDatabase:
             _ = index_
             _ = is_core_
 
-        self.__stack_all_embeddings(_push_embeddings)
+        self.__stack_all_embeddings(_push_embeddings, include_person=include_person)
         return x0
 
     def __get_all_embeddings_full(self):
@@ -305,11 +318,187 @@ class EmbeddingDatabase:
                 max_matched_cluster_id = c.cluster_id
         return max_matched_cluster_id, max_matched_count
 
-    def __reconstruct(self):
+    def __find_core_embedding_clusters(self, embeddings, target_size=-1, target_cluster_size=-1):
+        assert target_size != -1 or target_cluster_size != -1
+
+        if len(embeddings) <= target_cluster_size:
+            return None
+        distances = self.__metrics_mat(embeddings)
+        result = None
+        eps_scale_log2 = 0.0
+
+        while True:
+            eps_scale_log2 -= 0.05
+            clustering = DBSCAN(
+                min_samples=self.__dbscan_min_samples, metric="precomputed",
+                eps=self.__dbscan_eps * (2.0 ** eps_scale_log2))
+            y0 = clustering.fit_predict(distances)
+            cluster_count = int(np.max(y0)) + 1
+
+            # logging.info(
+            #     "find_core_embedding_clusters: eps_scale_log2 = %f, eps = %f, cluster_count = %d, clustered = %d" % (
+            #     eps_scale_log2, self.__dbscan_eps * (2.0 ** eps_scale_log2), int(np.max(y0)) + 1, len(y0[y0 != -1])))
+
+            if cluster_count == 0:
+                return result
+
+            result = y0
+
+            if target_size != -1:
+                if np.count_nonzero(y0 != -1) <= target_size:
+                    return y0
+
+            if target_cluster_size != -1:
+                min_cluster_size = sys.maxsize
+                for i in range(cluster_count):
+                    min_cluster_size = min(min_cluster_size, np.count_nonzero(y0 == i))
+                assert min_cluster_size != 0
+                if min_cluster_size <= target_cluster_size:
+                    return y0
+
+    def __remove_neighbor_embeddings(
+            self, embeddings, distance_threshold, size_lower_bound=0, removed_embeddings_store: list | None = None):
+        size = len(embeddings)
+        if size < size_lower_bound:
+            return embeddings
+        x0 = embeddings.copy()
+        np.random.shuffle(x0)
+        mask = ((self.__metrics_mat(x0) + np.tril(np.ones((size, size))).T).min(axis=1) > distance_threshold)
+        masked = x0[mask]
+        if len(masked) < size_lower_bound:
+            return embeddings
+        if removed_embeddings_store is not None:
+            removed_embeddings_store.append(x0[np.logical_not(mask)])
+
+        # logging.info("remove_neighbor_embeddings: %d -> %d (%d)" % (size, len(masked), len(masked) - size))
+
+        return masked
+
+    def __reduce_cluster_embeddings(
+            self, preferred_cluster_size=100, preferred_cluster_size_scale=0.75, distance_threshold_for_cluster=0.1,
+            removed_embeddings_store: list | None = None):
+
+        kwargs_shrink_cluster = {
+            "distance_threshold": distance_threshold_for_cluster,
+            "size_lower_bound": preferred_cluster_size,
+            "removed_embeddings_store": removed_embeddings_store
+        }
+        for c in self.__clusters.values():
+            c.core_embeddings = self.__remove_neighbor_embeddings(c.core_embeddings, **kwargs_shrink_cluster)
+            if c.sub_embeddings is not None:
+                c.sub_embeddings = self.__remove_neighbor_embeddings(c.sub_embeddings, **kwargs_shrink_cluster)
+
+            size_c = len(c.core_embeddings)
+            size_s = len(c.sub_embeddings) if c.sub_embeddings is not None else 0
+            if size_c + size_s <= preferred_cluster_size:
+                continue
+
+            target_size = int(preferred_cluster_size * np.exp(np.log(
+                (size_c + size_s) / preferred_cluster_size) * preferred_cluster_size_scale))
+            embeddings = np.concatenate([c.core_embeddings, c.sub_embeddings]) \
+                if c.sub_embeddings is not None else c.core_embeddings
+            clusters = self.__find_core_embedding_clusters(embeddings, target_size=target_size)
+
+            if clusters is None or np.count_nonzero(clusters[0:size_c] != -1) < self.__dbscan_min_samples:
+                continue
+
+            if removed_embeddings_store is not None:
+                removed_embeddings_store.append(embeddings[clusters == -1])
+
+            mask = (clusters != -1)
+            c.core_embeddings = embeddings[:size_c][mask[:size_c]]
+            c.sub_embeddings = embeddings[size_c:][mask[size_c:]] if np.count_nonzero(mask[size_c:]) != 0 else None
+
+            logging.info("cluster %d (%s): target %d; reduced %d(%d + %d) -> %d(%d + %d)" % (
+                c.cluster_id,
+                self.__persons[c.linked_person_ids[0]].name if len(c.linked_person_ids) != 0 else "unmapped",
+                target_size, size_c + size_s, size_c, size_s,
+                np.count_nonzero(mask), np.count_nonzero(mask[:size_c]), np.count_nonzero(mask[size_c:])))
+
+    def __reduce_person_embeddings(
+            self, preferred_cluster_size=100, distance_threshold_for_person=0.1,
+            removed_embeddings_store: list | None = None):
+
+        for p in self.__persons.values():
+            p.core_embeddings = self.__remove_neighbor_embeddings(
+                p.core_embeddings,
+                distance_threshold=distance_threshold_for_person,
+                size_lower_bound=preferred_cluster_size,
+                removed_embeddings_store=removed_embeddings_store)
+
+        original_person_id_map = {p.person_id: p.person_id for p in self.__persons.values()}
+
+        required_next_update = True
+        while required_next_update:
+            required_next_update = False
+            divided_persons = []
+            for p in self.__persons.values():
+                y0 = self.__find_core_embedding_clusters(
+                    p.core_embeddings, target_cluster_size=preferred_cluster_size)
+                if y0 is None:
+                    continue
+
+                cluster_count = int(np.max(y0)) + 1
+                if cluster_count == 1:
+                    p.core_embeddings = p.core_embeddings[y0 != -1]
+                    continue
+
+                required_next_update = True
+
+                original_embeddings = p.core_embeddings
+                p.core_embeddings = original_embeddings[y0 == 0]
+                for i in range(1, cluster_count):
+                    p_sub = copy.deepcopy(p)
+                    p_sub.core_embeddings = original_embeddings[y0 == i]
+                    p_sub.person_id = self.__next_person_index
+                    self.__next_person_index += 1
+                    divided_persons.append(p_sub)
+                    original_person_id_map[p_sub.person_id] = original_person_id_map[p.person_id]
+
+            for p in divided_persons:
+                self.__persons[p.person_id] = p
+
+        return original_person_id_map
+
+    def __reunion_person_embeddings(self, original_person_id_map):
+        for c in self.__clusters.values():
+            index = 0
+            while index + 1 < len(c.linked_person_ids):
+                original_person_id = original_person_id_map[c.linked_person_ids[index]]
+                for index_delta, person_id in enumerate(c.linked_person_ids[index + 1:]):
+                    if original_person_id != original_person_id_map[person_id]:
+                        continue
+                    target_person_id = c.linked_person_ids[index]
+                    if person_id == original_person_id:
+                        target_person_id, person_id = person_id, target_person_id
+                    p = self.__persons[target_person_id]
+                    p.core_embeddings = np.concatenate([p.core_embeddings, self.__persons[person_id].core_embeddings])
+                    c.linked_person_ids[index] = target_person_id
+                    del c.linked_person_ids[index + 1 + index_delta]
+                    del self.__persons[person_id]
+                    break
+                else:
+                    index += 1
+
+    def __reconstruct(self, force_reduce=False):
         tm0 = time.time()
 
         with measure_time.Measure("__reconstruct.prepare"):
-            x0 = self.__get_all_embeddings_x()
+            reduce_embeddings = (force_reduce or (
+                self.__reduce_embeddings_threshold_size != 0 and
+                self.__count_all_embeddings() + self.__count_all_person_embeddings()
+                > self.__reduce_embeddings_threshold_size))
+
+            original_person_id_map = {}
+            removed_embeddings_store = []
+            if reduce_embeddings:
+                self.__reduce_cluster_embeddings(
+                    self.__preferred_cluster_size, self.__preferred_cluster_size_scale,
+                    self.__distance_threshold_for_cluster, removed_embeddings_store)
+                original_person_id_map = self.__reduce_person_embeddings(
+                    self.__preferred_person_size, self.__distance_threshold_for_person, removed_embeddings_store)
+
+            x0 = self.__get_all_embeddings_x(include_person=reduce_embeddings)
             if len(x0) == 0:
                 return
             self.__unprocessed_embeddings.clear()
@@ -325,33 +514,37 @@ class EmbeddingDatabase:
         # Re-map the clusters
         # Check if the clusters can be mapped to an existing _Cluster
         # (Multiple clusters can be mapped to a single _Cluster)
-        with measure_time.Measure("__reconstruct.map_clusters"):
-            self.__update_cache_core_embedding_hash()
-            x0h = _embedding_hash(x0)
-            cluster_mapping = []  # cluster_id or -1 if not mapped
-            for i in range(cluster_count):
-                matched_cluster_id, _ = self.__find_matched_cluster(
-                    x0h[y0 == i], self.__min_matched_embeddings_to_inherit_cluster)
-                cluster_mapping.append(matched_cluster_id)
+        if reduce_embeddings:
+            self.__clusters.clear()
+            cluster_mapping = [-1 for _ in range(cluster_count)]
+        else:
+            with measure_time.Measure("__reconstruct.map_clusters"):
+                self.__update_cache_core_embedding_hash()
+                x0h = _embedding_hash(x0)
+                cluster_mapping = []  # cluster_id or -1 if not mapped
+                for i in range(cluster_count):
+                    matched_cluster_id, _ = self.__find_matched_cluster(
+                        x0h[y0 == i], self.__min_matched_embeddings_to_inherit_cluster)
+                    cluster_mapping.append(matched_cluster_id)
 
-        with measure_time.Measure("__reconstruct.migrate_clusters"):
-            cluster_id_to_remove = []
-            for c in self.__clusters.values():
-                c.linked_person_ids.clear()
-                c.sub_embeddings = None
+            with measure_time.Measure("__reconstruct.migrate_clusters"):
+                cluster_id_to_remove = []
+                for c in self.__clusters.values():
+                    c.linked_person_ids.clear()
+                    c.sub_embeddings = None
 
-                mask = np.zeros((len(x0),), dtype=bool)
-                for i, cluster_id in enumerate(cluster_mapping):
-                    if cluster_id == c.cluster_id:
-                        mask += (y0 == i)
-                if not np.max(mask):
-                    cluster_id_to_remove.append(c.cluster_id)
-                else:
-                    c.core_embeddings = x0[mask]
+                    mask = np.zeros((len(x0),), dtype=bool)
+                    for i, cluster_id in enumerate(cluster_mapping):
+                        if cluster_id == c.cluster_id:
+                            mask += (y0 == i)
+                    if not np.max(mask):
+                        cluster_id_to_remove.append(c.cluster_id)
+                    else:
+                        c.core_embeddings = x0[mask]
 
-        # Delete _Cluster where embedding was not mapped
-        for cluster_id in cluster_id_to_remove:
-            del self.__clusters[cluster_id]
+                # Delete _Cluster where embedding was not mapped
+                for cluster_id in cluster_id_to_remove:
+                    del self.__clusters[cluster_id]
 
         # Clusters not mapped to an existing _Cluster are created as a new _Cluster
         with measure_time.Measure("__reconstruct.add_new_clusters"):
@@ -404,6 +597,9 @@ class EmbeddingDatabase:
                     p.last_mapped_time = tm0
                     self.__clusters[p.cluster_id].linked_person_ids.append(p.person_id)
 
+            if reduce_embeddings:
+                self.__reunion_person_embeddings(original_person_id_map)
+
         with measure_time.Measure("__reconstruct.migrate_persons"):
             person_id_to_remove = []
 
@@ -435,6 +631,8 @@ class EmbeddingDatabase:
 
         self.__generation += 1
         self.__update_cache()
+
+        return np.concatenate(removed_embeddings_store) if len(removed_embeddings_store) != 0 else None
 
     def __map(self, tm0: float, embeddings: np.ndarray) -> list[int]:
         ret = []
@@ -546,10 +744,11 @@ class EmbeddingDatabase:
                     "generation": self.__generation
                 }, f.stream)
 
-    def reconstruct(self):
+    def reconstruct(self, force_reconstruct=False, force_reduce=False):
         with self.__lock0:
-            if self.__mapped_to_unknown_count != 0:
-                self.__reconstruct()
+            if force_reconstruct or self.__mapped_to_unknown_count != 0:
+                return self.__reconstruct(force_reduce=force_reduce)
+        return None
 
     def get_generation(self):
         with self.__lock0:
@@ -716,6 +915,8 @@ def _create_embedding_map_from_pickle(d):
     x0 = np.concatenate([x0, np.vstack(embeddings1)], axis=0)
     logging.info("found %d embeddings (%d in clusters), shape = %d" % (x0.shape[0], cluster_emb_len, x0.shape[1]))
 
+    # tsne = TSNE(n_components=2, metric="precomputed", init="random")
+    # x0m = tsne.fit_transform(_cosine_distance_mat(x0))
     tsne = TSNE(n_components=2, metric="cosine")
     x0m = tsne.fit_transform(x0)
     x0h = _embedding_hash(x0)
@@ -826,7 +1027,15 @@ class _Plot:
             tx_ = x2m[mask_]
             if len(tx_) != 0:
                 elements.append(self.__ax.scatter(
-                    tx_[:, 0], tx_[:, 1], color="none", edgecolors=color_, s=7.0, linewidths=0.25, **kwargs_))
+                    tx_[:, 0], tx_[:, 1], color=color_, edgecolors="#C0C0C0", s=7.0, linewidths=0.25, **kwargs_))
+
+        def _add_scatter_p_no_cluster(mask_, **kwargs_):
+            nonlocal elements
+            tx_ = x2m[mask_]
+            if len(tx_) != 0:
+                elements.append(self.__ax.scatter(
+                    tx_[:, 0], tx_[:, 1], marker="o", facecolors="none", edgecolors="red", s=7.0, linewidths=0.25,
+                    **kwargs_))
 
         def _add_label(mask_, color_, text_, **kwargs):
             nonlocal elements
@@ -837,13 +1046,25 @@ class _Plot:
                     "facecolor": "white", "edgecolor": "none", "boxstyle": "Round", "alpha": 0.5}, **kwargs))
 
         for p in sorted_persons:
-            _, color1 = self.__cluster_color_map[p["cluster_id"]] if p["cluster_id"] != -1 else (None, "black")
-            _add_scatter_p(y2 == p["person_id"], color1)
+            if p["cluster_id"] != -1:
+                _add_scatter_p(y2 == p["person_id"], self.__cluster_color_map[p["cluster_id"]][1])
+            else:
+                _add_scatter_p_no_cluster(y2 == p["person_id"])
 
         for p in sorted_persons:
-            _add_label(y2 == p["person_id"], "black" if p["cluster_id"] != -1 else "#606060", p["name"], size=6.0)
+            _add_label(
+                y2 == p["person_id"],
+                "gray" if p["superseded_by"] != -1 else "black" if p["cluster_id"] != -1 else "red",
+                "%s[%d]" % (p["name"], p["person_id"]), size=6.0)
 
         self.__artists.append(elements)
+        return self.__fig
+
+    def plot_embeddings(self, embeddings, **kwargs):
+        x1h = _embedding_hash(embeddings)
+        _, indexes0, _ = np.intersect1d(self.__x0h, x1h, return_indices=True)
+        x1m = self.__x0m[indexes0]
+        self.__artists.append([self.__ax.scatter(x1m[:, 0], x1m[:, 1], **kwargs)])
         return self.__fig
 
     def save(self, file_name):
@@ -881,15 +1102,17 @@ def _op_reconstruct_common(input_file_name, db_opt, inherit_persons, manipulator
 
 
 def _op_reconstruct_and_plot(
-        input_file_name, db_opt, manipulator, inherit_persons, save_plot_file_name, show):
+        input_file_name, db_opt, manipulator, inherit_persons, save_plot_file_name, show, force_reduce):
 
     x0, x0m, x0h, cluster_emb_len, db = _op_reconstruct_common(input_file_name, db_opt, inherit_persons, manipulator)
 
     db.map(x0[:cluster_emb_len])
-    db.reconstruct()
+    removed = db.reconstruct(force_reconstruct=True, force_reduce=force_reduce)
 
     if save_plot_file_name is not None or show:
         pl = _Plot(x0m, x0h)
+        if removed is not None:
+            pl.plot_embeddings(removed, color="gray", marker="x", s=2.0, linewidths=0.2)
         pl.plot(db=db)
         if save_plot_file_name is not None:
             pl.save(save_plot_file_name)
@@ -908,7 +1131,7 @@ def _op_reconstruct_and_plot_anim(
     for i in range(0, cluster_emb_len, sample_pitch):
         i_bound = min(cluster_emb_len, i + sample_pitch)
         db.map(x0[i:i_bound])
-        db.reconstruct()
+        db.reconstruct(force_reconstruct=True)
         pl.plot(db=db)
 
     if save_plot_file_name is not None:
@@ -940,6 +1163,9 @@ def main(args=None):
     gr_op.add_argument(
         "-R", "--reconstruct", action="store_true",
         dest="op_reconstruct")
+    gr_op.add_argument(
+        "--force-reduce", action="store_true",
+        dest="op_force_reduce")
     gr_op.add_argument(
         "--reconstruct-anim", metavar="reconstruct_per_sample_count[1..]",
         action="store", type=int,
@@ -986,7 +1212,7 @@ def main(args=None):
     if opt.op_reconstruct:
         db = _op_reconstruct_and_plot(
             opt.input, db_opt, _manipulation, opt.ext_inherit_persons,
-            opt.save_plot, opt.show)
+            opt.save_plot, opt.show, opt.op_force_reduce)
 
     if opt.op_reconstruct_anim > 0:
         db = _op_reconstruct_and_plot_anim(
