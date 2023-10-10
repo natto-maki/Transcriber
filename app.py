@@ -25,6 +25,7 @@ import iso639
 import tools
 import main_types as t
 import llm_openai as llm
+import emb_db
 import main
 import transcriber_plugin as pl
 
@@ -564,12 +565,16 @@ def _reload_history(f_history_selector):
         _update_history(f_history_selector) if len(f_history_selector) != 0 else ""
 
 
-def _get_person(p):
-    return "%s (ID:%d)" % (p.name, p.person_id) if p is not None else None
+def _get_person_display_name(p: emb_db.Person):
+    return "%s (ID:%d)" % (p.name, p.person_id)
 
 
-def _get_persons():
-    return [_get_person(p) for p in _app.get_persons()]
+def _get_person(p: emb_db.Person | None):
+    return _get_person_display_name(p) if p is not None else None
+
+
+def _get_persons() -> list[str]:
+    return [_get_person_display_name(p) for p in _app.get_persons()]
 
 
 def _resolve_person(choice: str | None):
@@ -668,12 +673,12 @@ def _erase_person(f_person_selector):
     return gr.Dropdown.update(choices=_get_persons(), value=None), _output_person_list()
 
 
-def _encode_embedding_type(embedding_type: str | None):
+def _encode_embedding_type(embedding_type: str | None) -> str:
     return embedding_type if embedding_type == "speechbrain" or embedding_type == "pyannote" \
         else i18n.t('app.conf_embedding_type_none')
 
 
-def _get_embedding_types():
+def _get_embedding_types() -> list[str]:
     return [_encode_embedding_type(None), "speechbrain", "pyannote"]
 
 
