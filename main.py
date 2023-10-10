@@ -1037,10 +1037,15 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
 @dataclasses.dataclass
 class EmbeddingDatabaseConfiguration:
     threshold: float = 0.6
-    dbscan_eps: float = 0.4
+    dbscan_eps: float = 0.35
     dbscan_min_samples: int = 6
     min_matched_embeddings_to_inherit_cluster: int = 6
     min_matched_embeddings_to_match_person: int = 6
+    preferred_cluster_size: int = 100
+    preferred_cluster_size_scale: float = 0.75
+    distance_threshold_for_cluster: float = 0.1
+    preferred_person_size: int = 100
+    distance_threshold_for_person: float = 0.1
 
 
 @dataclasses.dataclass
@@ -1067,7 +1072,7 @@ class Configuration:
 
     emb_sb: EmbeddingDatabaseConfiguration = dataclasses.field(default_factory=EmbeddingDatabaseConfiguration)
     emb_pn: EmbeddingDatabaseConfiguration = dataclasses.field(default_factory=EmbeddingDatabaseConfiguration)
-    max_hold_embeddings: int = 40
+    reduce_embeddings_threshold_size: int = 0
 
     qualify_soft_limit: float = 180.0
     qualify_hard_limit: float = 300.0
@@ -1209,7 +1214,12 @@ class Application:
             "dbscan_min_samples": ec.dbscan_min_samples,
             "min_matched_embeddings_to_inherit_cluster": ec.min_matched_embeddings_to_inherit_cluster,
             "min_matched_embeddings_to_match_person": ec.min_matched_embeddings_to_match_person,
-            "max_hold_embeddings": c.max_hold_embeddings
+            "reduce_embeddings_threshold_size": c.reduce_embeddings_threshold_size,
+            "preferred_cluster_size": ec.preferred_cluster_size,
+            "preferred_cluster_size_scale": ec.preferred_cluster_size_scale,
+            "distance_threshold_for_cluster": ec.distance_threshold_for_cluster,
+            "preferred_person_size": ec.preferred_person_size,
+            "distance_threshold_for_person": ec.distance_threshold_for_person
         }
 
     @staticmethod
