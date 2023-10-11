@@ -24,7 +24,7 @@ import iso639
 
 import tools
 import main_types as t
-import llm_openai as llm
+import llm
 import main
 import transcriber_plugin as pl
 
@@ -752,10 +752,12 @@ def _apply_configuration(
     conf.qualify_merge_interval = f_conf_qualify_merge_interval
     conf.qualify_merge_threshold = f_conf_qualify_merge_threshold
 
-    conf.llm_opt = llm.QualifyOptions(
+    conf.lm_options = llm.LmOptions(
         input_language=f_conf_input_language, output_language=f_conf_output_language,
-        model_for_step1=f_conf_qualify_llm_model_name_step1,
-        model_for_step2=f_conf_qualify_llm_model_name_step2
+        handler=llm.handler_openai,
+        options={llm.handler_openai: llm.OpenAiOptions(
+            model_for_step1=f_conf_qualify_llm_model_name_step1,
+            model_for_step2=f_conf_qualify_llm_model_name_step2)}
     )
 
     conf.disabled_plugins = [plugin for plugin in _find_plugins() if plugin not in f_conf_enable_plugins]
@@ -890,7 +892,7 @@ def app_main(args=None):
                 f_conf_output_language = gr.Dropdown(
                     label=i18n.t('app.conf_output_language'),
                     multiselect=False, allow_custom_value=False,
-                    choices=["en", "ja"], value=_conf.llm_opt.output_language)
+                    choices=["en", "ja"], value=_conf.lm_options.output_language)
             with gr.Group():
                 f_conf_ui_language = gr.Dropdown(
                     label=i18n.t('app.conf_ui_language'),
@@ -1005,16 +1007,18 @@ def app_main(args=None):
                         minimum=0.1, maximum=0.9, value=_conf.qualify_merge_threshold, step=0.01)
 
                     llm_model_choices = ["gpt-4-0613", "gpt-4-0314", "gpt-3.5-turbo-0613"]
+                    lm_options_openai = _conf.lm_options.options[llm.handler_openai] \
+                        if llm.handler_openai in _conf.lm_options.options else llm.OpenAiOptions()
                     f_conf_qualify_llm_model_name_step1 = gr.Dropdown(
                         label=i18n.t('app.conf_qualify_llm_model_name_step1'),
                         multiselect=False, allow_custom_value=False,
                         choices=llm_model_choices,
-                        value=_conf.llm_opt.model_for_step1)
+                        value=lm_options_openai.model_for_step1)
                     f_conf_qualify_llm_model_name_step2 = gr.Dropdown(
                         label=i18n.t('app.conf_qualify_llm_model_name_step2'),
                         multiselect=False, allow_custom_value=False,
                         choices=llm_model_choices,
-                        value=_conf.llm_opt.model_for_step2)
+                        value=lm_options_openai.model_for_step2)
 
         f_text.change(None, None, None, _js=move_to_last_js)
         f_history_selector.select(_update_history, [f_history_selector], [f_history_text])

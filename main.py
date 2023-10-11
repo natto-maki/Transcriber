@@ -23,7 +23,7 @@ import common
 import tools
 import main_types as t
 import emb_db as db
-import llm_openai as llm
+import llm
 import transcriber
 import transcriber_plugin as pl
 
@@ -786,7 +786,7 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
     note: Callbacks from this class may also be called after close()
     """
     def __init__(self, stream, backend, file_name=None, soft_limit=180.0, hard_limit=300.0, silent_interval=20.0,
-                 merge_interval=10.0, merge_threshold=0.3, llm_opt: llm.QualifyOptions | None = None,
+                 merge_interval=10.0, merge_threshold=0.3, lm_options: llm.LmOptions | None = None,
                  auto_sync=True, enable_simultaneous_interpretation=True,
                  separator_interval_on_interpretation_enabled=30.0, **kwargs):
 
@@ -798,8 +798,8 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
         self.__silent_interval = silent_interval
         self.__merge_interval = merge_interval
         self.__merge_threshold = merge_threshold
-        self.__llm_opt = dataclasses.replace(llm_opt) if llm_opt is not None else llm.QualifyOptions()
-        self.__default_input_language = self.__llm_opt.input_language
+        self.__lm_options = dataclasses.replace(lm_options) if lm_options is not None else llm.LmOptions()
+        self.__default_input_language = self.__lm_options.input_language
         self.__auto_sync = auto_sync
         self.__enable_simultaneous_interpretation = enable_simultaneous_interpretation
         self.__separator_interval_on_interpretation_enabled = separator_interval_on_interpretation_enabled
@@ -834,11 +834,11 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
         for s in gr.sentences:
             if s.prop is not None and s.prop.language != "":
                 language_count.setdefault(s.prop.language, [0])[0] += 1
-        self.__llm_opt.input_language = max(language_count.items(), key=lambda e_: e_[1][0])[0] \
+        self.__lm_options.input_language = max(language_count.items(), key=lambda e_: e_[1][0])[0] \
             if len(language_count) != 0 else self.__default_input_language
 
         try:
-            f = llm.qualify(gr.sentences, opt=self.__llm_opt)
+            f = llm.qualify(gr.sentences, opt=self.__lm_options)
             with self.__lock2:
                 self.__qualify_future = f
             qualified = f.wait_result(on_timeout=1)
@@ -873,7 +873,8 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
             s.si_state.processing = " ".join(s.si_state.waiting)
             s.si_state.waiting.clear()
 
-        out_text = llm.low_latency_interpretation(in_language, self.__llm_opt.output_language, in_text)
+        out_text = llm.low_latency_interpretation(
+            in_language, self.__lm_options.output_language, in_text, opt=self.__lm_options)
 
         with self.__lock0:
             s.si_state.processed_org.append(s.si_state.processing)
@@ -888,7 +889,7 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
             return
         if s.sentence_type != t.SentenceType.Sentence:
             return
-        if s.prop is None or s.prop.language == "" or s.prop.language == self.__llm_opt.output_language:
+        if s.prop is None or s.prop.language == "" or s.prop.language == self.__lm_options.output_language:
             return
         s.si_state = t.SimultaneousInterpretationState(processed_org=[], waiting=[s.text])
         self.__interpretation_executor.submit(self.__interpret, gr_index, s)
@@ -1047,7 +1048,7 @@ class EmbeddingDatabaseConfiguration:
 class Configuration:
     input_devices: list[str] | None = None
     device: str = "cpu"  # "cpu" "gpu" or access point
-    language: str = "ja"  # copied to llm_opt.input_language
+    language: str = "ja"  # copied to lm_options.input_language
     enable_auto_detect_language: bool = False
     enable_simultaneous_interpretation: bool = False
 
@@ -1075,7 +1076,7 @@ class Configuration:
     qualify_merge_interval: float = 10.0
     qualify_merge_threshold: float = 0.3
 
-    llm_opt: llm.QualifyOptions | None = None
+    lm_options: llm.LmOptions | None = None
 
     disabled_plugins: list[str] = dataclasses.field(default_factory=lambda: ["simple_memo"])
 
@@ -1138,9 +1139,9 @@ class Application:
             default_device = next(d for d in devices if d["index"] == default_index)
             self.__conf.input_devices = [default_device["name"]]
 
-        if self.__conf.llm_opt is None:
-            self.__conf.llm_opt = llm.QualifyOptions()
-        self.__conf.llm_opt.input_language = self.__conf.language
+        if self.__conf.lm_options is None:
+            self.__conf.lm_options = llm.LmOptions()
+        self.__conf.lm_options.input_language = self.__conf.language
 
         self.__audio: dict[str, AudioInput] = {
             name: AudioInput(selected_device=next(d for d in devices if d["name"] == name)["index"])
@@ -1186,7 +1187,7 @@ class Application:
             soft_limit=self.__conf.qualify_soft_limit, hard_limit=self.__conf.qualify_hard_limit,
             silent_interval=self.__conf.qualify_silent_interval,
             merge_interval=self.__conf.qualify_merge_interval, merge_threshold=self.__conf.qualify_merge_threshold,
-            llm_opt=self.__conf.llm_opt,
+            lm_options=self.__conf.lm_options,
             enable_simultaneous_interpretation=self.__conf.enable_simultaneous_interpretation)
 
         self.__sync_stop: th.Semaphore | None = None
@@ -1239,8 +1240,8 @@ class Application:
                     os.makedirs(plugin_data_dir, exist_ok=True)
                     p: pl.Plugin = m.create(
                         __sampling_rate=sampling_rate, __ui_language=self.__ui_language, __data_dir=plugin_data_dir,
-                        __input_language=self.__conf.llm_opt.input_language,
-                        __output_language=self.__conf.llm_opt.output_language
+                        __input_language=self.__conf.lm_options.input_language,
+                        __output_language=self.__conf.lm_options.output_language
                     )
                     self.__plugin_instance_cache[plugin_name] = p
                 except Exception as ex:
