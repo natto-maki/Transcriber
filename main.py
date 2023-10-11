@@ -799,6 +799,7 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
         self.__merge_interval = merge_interval
         self.__merge_threshold = merge_threshold
         self.__lm_options = dataclasses.replace(lm_options) if lm_options is not None else llm.LmOptions()
+        self.__lm_options.fill_defaults()
         self.__default_input_language = self.__lm_options.input_language
         self.__auto_sync = auto_sync
         self.__enable_simultaneous_interpretation = enable_simultaneous_interpretation
@@ -824,12 +825,20 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
 
         self._stream = stream.add_callback(self.__sentence_callback)
 
+        llm.ensure_model_is_ready(self.__lm_options)
+
     def __delayed_callback(self, gr_index: int):
         self._invoke_callback(gr_index)
         if self.__auto_sync:
             self.sync()
 
     def __freeze(self, gr_index: int, gr: t.SentenceGroup):
+        if self.__lm_options.handler == llm.handler_disabled:
+            with self.__lock0:
+                gr.state = t.SENTENCE_UNPROCESSED
+            self.__callback_executor.submit(self.__delayed_callback, gr_index)
+            return
+
         language_count = {}
         for s in gr.sentences:
             if s.prop is not None and s.prop.language != "":
@@ -1139,8 +1148,9 @@ class Application:
             default_device = next(d for d in devices if d["index"] == default_index)
             self.__conf.input_devices = [default_device["name"]]
 
-        if self.__conf.lm_options is None:
-            self.__conf.lm_options = llm.LmOptions()
+        self.__conf.lm_options = dataclasses.replace(conf.lm_options) \
+            if conf.lm_options is not None else llm.LmOptions()
+        self.__conf.lm_options.fill_defaults()
         self.__conf.lm_options.input_language = self.__conf.language
 
         self.__audio: dict[str, AudioInput] = {

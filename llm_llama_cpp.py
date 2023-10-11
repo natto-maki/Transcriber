@@ -39,11 +39,11 @@ _default_model_name = "ggml-model-q4_m"
 _model_dir = "models"
 
 _lock0 = th.Lock()
-_current_model_name = ""
+_current_model_name: str = ""
 _current_model: Llama | None = None
 
 
-def _load_model(model_name: str | None):
+def _load_model(model_name: str):
     global _current_model_name, _current_model
 
     if _current_model_name == model_name:
@@ -79,7 +79,7 @@ def _load_model(model_name: str | None):
     _current_model_name = model_name
 
 
-def _invoke(messages, model_name: str | None = None):
+def _invoke(messages, model_name: str):
     with _lock0:
         _load_model(model_name)
         if _current_model is None:
@@ -104,9 +104,6 @@ def _invoke(messages, model_name: str | None = None):
             stop=["ASSISTANT:", "USER:", "SYSTEM:"],
             stream=False)
 
-        print("\n".join(prompt_list))
-        print(r0)
-
         finish_reason = r0["choices"][0]["finish_reason"]
         if finish_reason != "stop":
             raise RuntimeError("LLM finished with unexpected reason: " + finish_reason)
@@ -119,17 +116,16 @@ What is the main message in this conversation?
 '''
 
 
-def _qualify_procedure(sentences: list[t.Sentence], opt: llm.LmOptions | None = None) -> t.QualifiedResult:
-    _ = opt
-
+def _qualify_procedure(sentences: list[t.Sentence], opt: llm.LmOptions) -> t.QualifiedResult:
     has_embedding = (len([None for s in sentences if s.embedding is not None]) != 0)
     text = llm_tools.aggregate_sentences_with_embeddings(sentences) \
         if has_embedding else llm_tools.aggregate_sentences_no_embeddings(sentences)
 
     summaries = _invoke(messages=[
         {"role": "system", "content": _qualify_prompt},
-        {"role": "user", "content": text}
-    ])
+        {"role": "user", "content": text}],
+        model_name=opt.options[llm.handler_llama_cpp].model
+        if llm.handler_llama_cpp in opt.options else _default_model_name)
 
     return t.QualifiedResult(
         corrected_sentences=sentences,
@@ -138,17 +134,22 @@ def _qualify_procedure(sentences: list[t.Sentence], opt: llm.LmOptions | None = 
     )
 
 
-def _handle_qualify(sentences: list[t.Sentence], opt: llm.LmOptions | None, timeout) -> tools.AsyncCallFuture:
+def _handle_qualify(sentences: list[t.Sentence], opt: llm.LmOptions, timeout) -> tools.AsyncCallFuture:
     _ = timeout
     return tools.async_call(
         _qualify_procedure, [s.clone() for s in sentences], dataclasses.replace(opt), timeout=600.0)
 
 
-class LlamaCppHandler(llm.Handler):
-    def qualify(self, sentences: list[t.Sentence], opt: llm.LmOptions | None, timeout) -> tools.AsyncCallFuture:
+class _LlamaCppHandler(llm.Handler):
+    def ensure_model_is_ready(self, opt: llm.LmOptions):
+        with _lock0:
+            _load_model(opt.options[llm.handler_llama_cpp].model
+                        if llm.handler_llama_cpp in opt.options else _default_model_name)
+
+    def qualify(self, sentences: list[t.Sentence], opt: llm.LmOptions, timeout) -> tools.AsyncCallFuture:
         return _handle_qualify(sentences, opt, timeout)
 
 
 def get_handler(opt: llm.LmOptions):
     _ = opt
-    return LlamaCppHandler()
+    return _LlamaCppHandler()

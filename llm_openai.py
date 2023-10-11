@@ -304,10 +304,7 @@ def _qualify(sentences: list[t.Sentence], model_name: str, opt: llm.LmOptions) -
     return _summarize_sub(sentences, model_name, _qualify_p2_system(opt))
 
 
-def _qualify_procedure(sentences: list[t.Sentence], opt: llm.LmOptions | None = None) -> t.QualifiedResult:
-    if opt is None:
-        opt = llm.LmOptions()
-
+def _qualify_procedure(sentences: list[t.Sentence], opt: llm.LmOptions) -> t.QualifiedResult:
     has_embedding = (len([None for s in sentences if s.embedding is not None]) != 0)
 
     try:
@@ -329,7 +326,7 @@ def _qualify_procedure(sentences: list[t.Sentence], opt: llm.LmOptions | None = 
     )
 
 
-def _handle_qualify(sentences: list[t.Sentence], opt: llm.LmOptions | None, timeout) -> tools.AsyncCallFuture:
+def _handle_qualify(sentences: list[t.Sentence], opt: llm.LmOptions, timeout) -> tools.AsyncCallFuture:
     return tools.async_call(
         _qualify_procedure, [s.clone() for s in sentences], dataclasses.replace(opt), timeout=timeout)
 
@@ -382,8 +379,8 @@ def _handle_low_latency_interpretation(in_language: str | None, out_language: st
     return "[timeout]"
 
 
-class OpenAiHandler(llm.Handler):
-    def qualify(self, sentences: list[t.Sentence], opt: llm.LmOptions | None, timeout) -> tools.AsyncCallFuture:
+class _OpenAiHandler(llm.Handler):
+    def qualify(self, sentences: list[t.Sentence], opt: llm.LmOptions, timeout) -> tools.AsyncCallFuture:
         return _handle_qualify(sentences, opt, timeout)
 
     def low_latency_interpretation(self, in_language: str | None, out_language: str, text: str) -> str:
@@ -392,4 +389,4 @@ class OpenAiHandler(llm.Handler):
 
 def get_handler(opt: llm.LmOptions):
     _ = opt
-    return OpenAiHandler()
+    return _OpenAiHandler()
