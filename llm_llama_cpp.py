@@ -3,6 +3,7 @@ import subprocess
 import logging
 import dataclasses
 import threading as th
+import hashlib
 
 # https://github.com/abetlen/llama-cpp-python
 #
@@ -29,7 +30,8 @@ _model_table = {
     # https://huggingface.co/TFMC
     "ggml-model-q4_m": {
         "file": "ggml-model-q4_m.gguf",
-        "url": "https://huggingface.co/TFMC/openbuddy-llama2-13b-v11.1-bf16-GGUF/resolve/main/ggml-model-q4_m.gguf"
+        "url": "https://huggingface.co/TFMC/openbuddy-llama2-13b-v11.1-bf16-GGUF/resolve/main/ggml-model-q4_m.gguf",
+        "md5": "2f842bb7cc68662942ad9c7a94c62659e04fc79b261002ab5171917761551d6b"
     }
 }
 
@@ -56,10 +58,22 @@ def _load_model(model_name: str | None):
 
     os.makedirs(_model_dir, exist_ok=True)
     if not os.path.isfile(file_path):
+        logging.info("%s: Downloading..." % model_name)
         r0 = subprocess.run(["wget", m["url"]], cwd=_model_dir)
         if r0.returncode != 0:
-            logging.error("Cannot download model file - %s" % m["url"])
+            logging.error("%s: Failed to download model file - %s" % (model_name, m["url"]))
             return
+        if "md5" in m:
+            with open(file_path, "rb") as f:
+                digest = hashlib.file_digest(f, "sha256")
+            if m["md5"] == digest.hexdigest():
+                with open(file_path + ".checked", "w") as f:
+                    f.write(m["md5"])
+                logging.info("%s: Download completed and md5sum verification succeeded" % model_name)
+
+    if "md5" in m and not os.path.isfile(file_path + ".checked"):
+        logging.error("%s: md5sum verification failed" % model_name)
+        return
 
     _current_model = Llama(model_path=file_path, n_ctx=2048, n_gpu_layers=100)
     _current_model_name = model_name
