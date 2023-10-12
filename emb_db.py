@@ -413,7 +413,8 @@ class EmbeddingDatabase:
 
             logging.info("cluster %d (%s): target %d; reduced %d(%d + %d) -> %d(%d + %d)" % (
                 c.cluster_id,
-                self.__persons[c.linked_person_ids[0]].name if len(c.linked_person_ids) != 0 else "unmapped",
+                self.__persons[c.linked_person_ids[0]].name
+                if len(c.linked_person_ids) != 0 and c.linked_person_ids[0] in self.__persons else "unmapped",
                 target_size, size_c + size_s, size_c, size_s,
                 np.count_nonzero(mask), np.count_nonzero(mask[:size_c]), np.count_nonzero(mask[size_c:])))
 
