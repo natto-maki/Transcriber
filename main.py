@@ -1359,6 +1359,9 @@ class Application:
         self.__db.erase(person_id)
         self.__sync()
 
+    def reconstruct_db(self, force_reconstruct=False):
+        self.__db.reconstruct(force_reconstruct=force_reconstruct)
+
     def plot_db(self, embedding_type: str):
         return self.__db.plot(embedding_type)
 

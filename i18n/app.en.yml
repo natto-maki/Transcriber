@@ -14,6 +14,7 @@ en:
   history_date: "Date"
   history_reload: "Reload"
   diarization_update: "Reload"
+  diarization_update_with_reconstruct: "Force reconstruct database"
   diarization_update_with_plot: "Visualize clustering result (takes a minute)"
   diarization_person_selector: "Select person"
   diarization_new_name: "Name"

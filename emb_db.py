@@ -877,9 +877,9 @@ class HybridEmbeddingDatabase:
         for db in self.__db:
             db.sync()
 
-    def reconstruct(self):
+    def reconstruct(self, **kwargs):
         for db in self.__db:
-            db.reconstruct()
+            db.reconstruct(**kwargs)
 
     def get_generation(self):
         return [db.get_generation() for db in self.__db]

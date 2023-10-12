@@ -14,6 +14,7 @@ ja:
   history_date: "記録日"
   history_reload: "再読み込み"
   diarization_update: "最新の情報に更新"
+  diarization_update_with_reconstruct: "データベースを再構成する"
   diarization_update_with_plot: "クラスタリング結果を可視化する(少し時間がかかります)"
   diarization_person_selector: "人物を選択"
   diarization_new_name: "変更後の名前"

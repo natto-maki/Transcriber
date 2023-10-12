@@ -640,7 +640,9 @@ def _pre_update_diarization():
     return gr.Button.update(interactive=False)
 
 
-def _update_diarization(f_person_selector, f_update_diarization_with_plot):
+def _update_diarization(f_person_selector, f_update_diarization_with_reconstruct, f_update_diarization_with_plot):
+    if f_update_diarization_with_reconstruct:
+        _app.reconstruct_db(force_reconstruct=True)
     ret_f_person_selector = gr.Dropdown.update(
         choices=_get_persons(),
         value=_get_person(_resolve_person(f_person_selector)))
@@ -853,6 +855,8 @@ def app_main(args=None):
 
         with gr.Tab(i18n.t("app.tab_diarization")):
             f_update_diarization = gr.Button(value=i18n.t("app.diarization_update"))
+            f_update_diarization_with_reconstruct = gr.Checkbox(
+                label=i18n.t('app.diarization_update_with_reconstruct'), value=False)
             f_update_diarization_with_plot = gr.Checkbox(
                 label=i18n.t('app.diarization_update_with_plot'), value=False)
             f_person_plot = gr.Plot(visible=False)
@@ -1048,7 +1052,7 @@ def app_main(args=None):
         f_history_reload.click(_reload_history, [f_history_selector], [f_history_selector, f_history_text])
         f_update_diarization.click(_pre_update_diarization, None, [f_update_diarization]).then(
             _update_diarization,
-            [f_person_selector, f_update_diarization_with_plot],
+            [f_person_selector, f_update_diarization_with_reconstruct, f_update_diarization_with_plot],
             [f_person_selector, f_person_list, f_person_plot, f_update_diarization])
         f_person_selector.select(_select_person, [f_person_selector], [f_person_new_name])
         f_person_rename.click(
