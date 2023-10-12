@@ -327,7 +327,7 @@ class EmbeddingDatabase:
         result = None
         eps_scale_log2 = 0.0
 
-        while True:
+        for _ in range(20):
             eps_scale_log2 -= 0.05
             clustering = DBSCAN(
                 min_samples=self.__dbscan_min_samples, metric="precomputed",
@@ -355,6 +355,8 @@ class EmbeddingDatabase:
                 assert min_cluster_size != 0
                 if min_cluster_size <= target_cluster_size:
                     return y0
+        else:
+            return None
 
     def __remove_neighbor_embeddings(
             self, embeddings, distance_threshold, size_lower_bound=0, removed_embeddings_store: list | None = None):
