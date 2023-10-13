@@ -50,6 +50,8 @@ def _dump_embeddings(target, shape_only):
             return []
         if isinstance(target[0], np.ndarray) and len(target[0].shape) == 1:
             return "list[%d ndarray(shape=(%d,))]" % (len(target), target[0].shape[0])
+        if isinstance(target[0], np.ndarray) and len(target[0].shape) == 2:
+            return "list[%d ndarray(shape=(?,%d))]" % (len(target), target[0].shape[1])
     raise ValueError()
 
 
@@ -86,11 +88,15 @@ class _Person:
     cluster_id: int = -1
     superseded_by: int = -1  # person_id; if another _Person points to _Cluster
     core_embeddings: np.ndarray | None = None
+    core_embeddings_history: list[np.ndarray] = dataclasses.field(default_factory=list)
     name: str = ""
     name_history: list[str] = dataclasses.field(default_factory=list)
     default_name: str = ""
     last_mapped_time: float = 0.0  # Time last mapped to _Cluster
     last_updated_time: float = 0.0  # Time when the name was updated
+
+    def is_named(self):
+        return self.name != self.default_name
 
     def dump(self, shape_only):
         return {
@@ -98,6 +104,7 @@ class _Person:
             "cluster_id": self.cluster_id,
             "superseded_by": self.superseded_by,
             "core_embeddings": _dump_embeddings(self.core_embeddings, shape_only),
+            "core_embeddings_history": _dump_embeddings(self.core_embeddings_history, shape_only),
             "name": self.name,
             "name_history": copy.copy(self.name_history),
             "default_name": self.default_name,
@@ -113,7 +120,8 @@ class EmbeddingDatabase:
                  min_matched_embeddings_to_match_person=3,
                  reduce_embeddings_threshold_size=0,
                  preferred_cluster_size=100, preferred_cluster_size_scale=0.75, distance_threshold_for_cluster=0.1,
-                 preferred_person_size=100, distance_threshold_for_person=0.1):
+                 preferred_person_size=100, distance_threshold_for_person=0.1,
+                 update_person_core_embeddings_interval=-1):
 
         self.__embedding_dim = embedding_dim
         self.__database_file_name = database_file_name
@@ -128,6 +136,7 @@ class EmbeddingDatabase:
         self.__distance_threshold_for_cluster = distance_threshold_for_cluster
         self.__preferred_person_size = preferred_person_size
         self.__distance_threshold_for_person = distance_threshold_for_person
+        self.__update_person_core_embeddings_interval = update_person_core_embeddings_interval
 
         self.__lock0 = th.Lock()
         self.__clusters: dict[int, _Cluster] = {}
@@ -228,13 +237,16 @@ class EmbeddingDatabase:
                 emb_count += len(c.sub_embeddings)
         return emb_count
 
-    def __count_all_person_embeddings(self):
+    def __count_all_person_embeddings(self, include_person_history=False):
         emb_count = 0
         for p in self.__persons.values():
             emb_count += len(p.core_embeddings)
+            if include_person_history:
+                for embeddings in p.core_embeddings_history:
+                    emb_count += len(embeddings)
         return emb_count
 
-    def __stack_all_embeddings(self, callback, include_person=False):
+    def __stack_all_embeddings(self, callback, include_person=False, include_person_history=False):
         offset = 0
 
         def _push_embeddings(embeddings_, index_, is_core_):
@@ -255,6 +267,9 @@ class EmbeddingDatabase:
         if include_person:
             for p in self.__persons.values():
                 _push_embeddings(p.core_embeddings, -3, True)
+                if include_person_history:
+                    for i, embeddings in enumerate(p.core_embeddings_history):
+                        _push_embeddings(embeddings, -4 if i == 0 else -5, True)
 
     def __get_all_embeddings_x(self, include_person=False):
         emb_count = self.__count_all_embeddings()
@@ -290,7 +305,7 @@ class EmbeddingDatabase:
 
     def __get_all_embeddings_for_mapping(self):
         emb_count0 = self.__count_all_embeddings()
-        emb_count1 = self.__count_all_person_embeddings()
+        emb_count1 = self.__count_all_person_embeddings(include_person_history=True)
 
         x0 = np.zeros((emb_count0 + emb_count1, self.__embedding_dim), dtype=np.float32)
 
@@ -300,8 +315,8 @@ class EmbeddingDatabase:
             _ = index_
             _ = is_core_
 
-        self.__stack_all_embeddings(_push_embeddings, include_person=True)
-        return x0, emb_count0
+        self.__stack_all_embeddings(_push_embeddings, include_person=True, include_person_history=True)
+        return x0
 
     def __update_cache_core_embedding_hash(self):
         self.__cache_core_embedding_hash.clear()
@@ -490,7 +505,31 @@ class EmbeddingDatabase:
                 else:
                     index += 1
 
-    def __reconstruct(self, force_reduce=False):
+    def __remove_unused_divided_person(self, original_person_id_map):
+        person_id_to_remove = []
+        for p in self.__persons.values():
+            if p.cluster_id != -1:
+                continue
+            original_id = original_person_id_map[p.person_id]
+            if len([None for id0, id1 in original_person_id_map.items()
+                    if id0 != p.person_id and id1 == original_id and self.__persons[id0].cluster_id != -1]) != 0:
+                person_id_to_remove.append(p.person_id)
+
+        for person_id in person_id_to_remove:
+            del self.__persons[person_id]
+
+    def __update_person_core_embeddings(self, person_id):
+        p = self.__persons[person_id]
+        if p.cluster_id == -1 or not p.is_named():
+            return
+        c = self.__clusters[p.cluster_id]
+        if len(c.linked_person_ids) != 1:
+            return
+        p.core_embeddings_history.append(p.core_embeddings)
+        p.core_embeddings = c.core_embeddings
+        logging.info("updated core embeddings for person %d(%s)" % (person_id, p.name))
+
+    def __reconstruct(self, force_reduce=False, force_update_person_core_embeddings=False):
         tm0 = time.time()
 
         with measure_time.Measure("__reconstruct.prepare"):
@@ -609,13 +648,14 @@ class EmbeddingDatabase:
 
             if reduce_embeddings:
                 self.__reunion_person_embeddings(original_person_id_map)
+                self.__remove_unused_divided_person(original_person_id_map)
 
         with measure_time.Measure("__reconstruct.migrate_persons"):
             person_id_to_remove = [
-                p.person_id for p in self.__persons.values() if p.cluster_id == -1 and p.name == p.default_name]
+                p.person_id for p in self.__persons.values() if p.cluster_id == -1 and not p.is_named()]
 
             def _person_score(p_):
-                return -(p_.last_updated_time + (tm0 if p_.name != p_.default_name else 0.0))
+                return -(p_.last_updated_time + (tm0 if p_.is_named() else 0.0))
 
             for c in self.__clusters.values():
                 if len(c.linked_person_ids) < 2:
@@ -623,15 +663,20 @@ class EmbeddingDatabase:
 
                 c.linked_person_ids.sort(key=lambda person_id_: _person_score(self.__persons[person_id_]))
                 p0 = self.__persons[c.linked_person_ids[0]]
-                p0_is_named = (p0.name != p0.default_name)
                 for person_id in c.linked_person_ids[1:]:
                     p = self.__persons[person_id]
                     p.superseded_by = c.linked_person_ids[0]
-                    if p0_is_named and p.name == p.default_name:
+                    if p0.is_named() and not p.is_named():
                         person_id_to_remove.append(person_id)
 
             for person_id in person_id_to_remove:
                 del self.__persons[person_id]
+
+            if force_update_person_core_embeddings or (
+                    self.__update_person_core_embeddings_interval > 0 and
+                    self.__generation + self.__update_person_core_embeddings_interval < int(tm0)):
+                for person_id in self.__persons.keys():
+                    self.__update_person_core_embeddings(person_id)
 
         # Assign a _Person to a _Cluster that does not have an existing _Person mapped to it
         for c in self.__clusters.values():
@@ -640,7 +685,7 @@ class EmbeddingDatabase:
                 p.cluster_id = c.cluster_id
                 c.linked_person_ids.append(p.person_id)
 
-        self.__generation += 1
+        self.__generation = int(tm0)
         self.__update_cache()
 
         return np.concatenate(removed_embeddings_store) if len(removed_embeddings_store) != 0 else None
@@ -695,8 +740,7 @@ class EmbeddingDatabase:
         with self.__lock0:
             for p in self.__persons.values():
                 ret.append(Person(
-                    person_id=p.person_id, superseded_by=p.superseded_by,
-                    name=p.name, is_default=(p.name == p.default_name),
+                    person_id=p.person_id, superseded_by=p.superseded_by, name=p.name, is_default=not p.is_named(),
                     last_mapped_time=self.__clusters[p.cluster_id].last_mapped_time if p.cluster_id != -1 else -1.0))
         return ret
 
@@ -753,10 +797,11 @@ class EmbeddingDatabase:
                     "generation": self.__generation
                 }, f.stream)
 
-    def reconstruct(self, force_reconstruct=False, force_reduce=False):
+    def reconstruct(self, force_reconstruct=False, force_reduce=False, force_update_person_core_embeddings=False):
         with self.__lock0:
             if force_reconstruct or self.__mapped_to_unknown_count != 0:
-                return self.__reconstruct(force_reduce=force_reduce)
+                return self.__reconstruct(
+                    force_reduce=force_reduce, force_update_person_core_embeddings=force_update_person_core_embeddings)
         return None
 
     def get_generation(self):
@@ -782,7 +827,7 @@ class EmbeddingDatabase:
 
     def plot(self):
         with self.__lock0:
-            x0, cluster_emb_len = self.__get_all_embeddings_for_mapping()
+            x0 = self.__get_all_embeddings_for_mapping()
             d = self.__dump_state(shape_only=False)
 
         tsne = TSNE(n_components=2, metric="cosine")
@@ -914,6 +959,8 @@ def _create_embedding_map_from_pickle(d):
     embeddings1 = []
     for p in d["persons"].values():
         embeddings1.append(p.core_embeddings)
+        if hasattr(p, "core_embeddings_history"):
+            embeddings1 += p.core_embeddings_history
 
     x0 = np.vstack(embeddings0)
     cluster_emb_len = len(x0)
@@ -1022,25 +1069,52 @@ class _Plot:
             _add_scatter_c((y1 == cluster_id) * c1, color0, 5.0, edgecolors=color1, linewidths=0.5)
 
         sorted_persons = sorted(d["persons"], key=lambda p_: p_["person_id"])
-        x2 = np.vstack([p["core_embeddings"] for p in sorted_persons])
-        y2 = np.concatenate([
-            np.full((len(p["core_embeddings"]),), p["person_id"], dtype=np.int32) for p in sorted_persons])
+        x2s = []
+        y2s = []
+        c2s = []
+        for p in sorted_persons:
+            emb = p["core_embeddings"]
+            x2s.append(emb)
+            y2s.append(np.full((len(emb),), p["person_id"], dtype=np.int32))
+            c2s.append(np.full((len(emb),), 0, dtype=np.int32))
+            if "core_embeddings_history" in p:
+                for i, emb in enumerate(p["core_embeddings_history"]):
+                    x2s.append(emb)
+                    y2s.append(np.full((len(emb),), p["person_id"], dtype=np.int32))
+                    c2s.append(np.full((len(emb),), 1 if i == 0 else 2, dtype=np.int32))
+        x2 = np.concatenate(x2s)
+        y2 = np.concatenate(y2s)
+        c2 = np.concatenate(c2s)
+
         x2h = _embedding_hash(x2)
         _, indexes0, indexes1 = np.intersect1d(self.__x0h, x2h, return_indices=True)
         # x2 = x2[indexes1]
         y2 = y2[indexes1]
+        c2 = c2[indexes1]
         x2m = self.__x0m[indexes0]
 
         def _add_scatter_p(mask_, color_, **kwargs_):
             nonlocal elements
-            tx_ = x2m[mask_]
+
+            tx_ = x2m[mask_ * (c2 == 0)]
             if len(tx_) != 0:
                 elements.append(self.__ax.scatter(
                     tx_[:, 0], tx_[:, 1], color=color_, edgecolors="#C0C0C0", s=7.0, linewidths=0.25, **kwargs_))
 
+            tx_ = x2m[mask_ * (c2 == 1)]
+            if len(tx_) != 0:
+                elements.append(self.__ax.scatter(
+                    tx_[:, 0], tx_[:, 1], marker="o", facecolors="none", edgecolors=color_, s=7.0, linewidths=0.25,
+                    **kwargs_))
+
+            tx_ = x2m[mask_ * (c2 == 2)]
+            if len(tx_) != 0:
+                elements.append(self.__ax.scatter(
+                    tx_[:, 0], tx_[:, 1], color=color_, marker="x", s=2.0, linewidths=0.2, **kwargs_))
+
         def _add_scatter_p_no_cluster(mask_, **kwargs_):
             nonlocal elements
-            tx_ = x2m[mask_]
+            tx_ = x2m[mask_ * (c2 == 0)]
             if len(tx_) != 0:
                 elements.append(self.__ax.scatter(
                     tx_[:, 0], tx_[:, 1], marker="o", facecolors="none", edgecolors="red", s=7.0, linewidths=0.25,
@@ -1103,7 +1177,7 @@ def _op_reconstruct_common(input_file_name, db_opt, inherit_persons, manipulator
     db = _create_embedding_database(db_opt, x0)
     if inherit_persons:
         for p in d["persons"].values():
-            if p.name != p.default_name:
+            if p.is_named():
                 db.add_person(p.core_embeddings, p.name)
 
     if manipulator is not None:
@@ -1113,12 +1187,15 @@ def _op_reconstruct_common(input_file_name, db_opt, inherit_persons, manipulator
 
 
 def _op_reconstruct_and_plot(
-        input_file_name, db_opt, manipulator, inherit_persons, save_plot_file_name, show, force_reduce):
+        input_file_name, db_opt, manipulator, inherit_persons, save_plot_file_name, show,
+        force_reduce, force_update_person_core):
 
     x0, x0m, x0h, cluster_emb_len, db = _op_reconstruct_common(input_file_name, db_opt, inherit_persons, manipulator)
 
     db.map(x0[:cluster_emb_len])
-    removed = db.reconstruct(force_reconstruct=True, force_reduce=force_reduce)
+    removed = db.reconstruct(
+        force_reconstruct=True, force_reduce=force_reduce,
+        force_update_person_core_embeddings=force_update_person_core)
 
     if save_plot_file_name is not None or show:
         pl = _Plot(x0m, x0h)
@@ -1178,6 +1255,9 @@ def main(args=None):
         "--force-reduce", action="store_true",
         dest="op_force_reduce")
     gr_op.add_argument(
+        "--force-update-person-core", action="store_true",
+        dest="op_force_update_person_core")
+    gr_op.add_argument(
         "--reconstruct-anim", metavar="reconstruct_per_sample_count[1..]",
         action="store", type=int,
         dest="op_reconstruct_anim", default=-1)
@@ -1223,7 +1303,7 @@ def main(args=None):
     if opt.op_reconstruct:
         db = _op_reconstruct_and_plot(
             opt.input, db_opt, _manipulation, opt.ext_inherit_persons,
-            opt.save_plot, opt.show, opt.op_force_reduce)
+            opt.save_plot, opt.show, opt.op_force_reduce, opt.op_force_update_person_core)
 
     if opt.op_reconstruct_anim > 0:
         db = _op_reconstruct_and_plot_anim(
