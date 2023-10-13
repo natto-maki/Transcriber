@@ -1104,13 +1104,13 @@ class _Plot:
             tx_ = x2m[mask_ * (c2 == 1)]
             if len(tx_) != 0:
                 elements.append(self.__ax.scatter(
-                    tx_[:, 0], tx_[:, 1], marker="o", facecolors="none", edgecolors=color_, s=7.0, linewidths=0.25,
+                    tx_[:, 0], tx_[:, 1], marker="s", facecolors="none", edgecolors=color_, s=7.0, linewidths=0.25,
                     **kwargs_))
 
             tx_ = x2m[mask_ * (c2 == 2)]
             if len(tx_) != 0:
                 elements.append(self.__ax.scatter(
-                    tx_[:, 0], tx_[:, 1], color=color_, marker="x", s=2.0, linewidths=0.2, **kwargs_))
+                    tx_[:, 0], tx_[:, 1], color=color_, marker="+", s=2.0, linewidths=0.2, **kwargs_))
 
         def _add_scatter_p_no_cluster(mask_, **kwargs_):
             nonlocal elements
@@ -1122,7 +1122,7 @@ class _Plot:
 
         def _add_label(mask_, color_, text_, **kwargs):
             nonlocal elements
-            tx_ = x2m[mask_]
+            tx_ = x2m[mask_ * (c2 == 0)]
             if len(tx_) != 0:
                 tx_ = np.average(tx_, axis=0)
                 elements.append(self.__ax.text(tx_[0], tx_[1], text_, color=color_, bbox={
