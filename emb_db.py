@@ -510,7 +510,7 @@ class EmbeddingDatabase:
 
             x0 = self.__get_all_embeddings_x(include_person=reduce_embeddings)
             if len(x0) == 0:
-                return
+                return None
             self.__unprocessed_embeddings.clear()
             self.__mapped_to_unknown_count = 0
 
@@ -611,7 +611,8 @@ class EmbeddingDatabase:
                 self.__reunion_person_embeddings(original_person_id_map)
 
         with measure_time.Measure("__reconstruct.migrate_persons"):
-            person_id_to_remove = []
+            person_id_to_remove = [
+                p.person_id for p in self.__persons.values() if p.cluster_id == -1 and p.name == p.default_name]
 
             def _person_score(p_):
                 return -(p_.last_updated_time + (tm0 if p_.name != p_.default_name else 0.0))
@@ -712,8 +713,6 @@ class EmbeddingDatabase:
         if len(new_name) == 0:
             return
         with self.__lock0:
-            self.__reconstruct()
-
             if person_id not in self.__persons:
                 return
             p = self.__persons[person_id]
