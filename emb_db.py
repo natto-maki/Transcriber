@@ -418,6 +418,19 @@ class EmbeddingDatabase:
                 target_size, size_c + size_s, size_c, size_s,
                 np.count_nonzero(mask), np.count_nonzero(mask[:size_c]), np.count_nonzero(mask[size_c:])))
 
+        size_c = self.__count_all_embeddings()
+        size_p = self.__count_all_person_embeddings()
+        size = size_c + size_p
+        logging.info("remains %d embeddings (%d in clusters + %d in persons)" % (size, size_c, size_p))
+
+        x0 = self.__get_all_embeddings_x(include_person=True)
+        mask = ((self.__metrics_mat(x0) + np.tril(np.ones((size, size))).T).min(axis=1) > 0.01)
+        sustain_embeddings = x0[mask * np.concatenate([np.full((size_c,), False), np.full((size_p,), True)])]
+        self.__unassigned_embeddings = np.concatenate([self.__unassigned_embeddings, sustain_embeddings]) \
+            if self.__unassigned_embeddings is not None else sustain_embeddings
+        logging.info("recover %d embeddings from core-points of persons -> total %d embeddings in clusters" % (
+            len(sustain_embeddings), size_c + len(sustain_embeddings)))
+
     def __reduce_person_embeddings(
             self, preferred_cluster_size=100, distance_threshold_for_person=0.1,
             removed_embeddings_store: list | None = None):
@@ -431,35 +444,29 @@ class EmbeddingDatabase:
 
         original_person_id_map = {p.person_id: p.person_id for p in self.__persons.values()}
 
-        required_next_update = True
-        while required_next_update:
-            required_next_update = False
-            divided_persons = []
-            for p in self.__persons.values():
-                y0 = self.__find_core_embedding_clusters(
-                    p.core_embeddings, target_cluster_size=preferred_cluster_size)
-                if y0 is None:
-                    continue
+        target_person_ids = list(self.__persons.keys())
+        while len(target_person_ids) != 0:
+            p = self.__persons[target_person_ids.pop(-1)]
 
-                cluster_count = int(np.max(y0)) + 1
-                if cluster_count == 1:
-                    p.core_embeddings = p.core_embeddings[y0 != -1]
-                    continue
+            y0 = self.__find_core_embedding_clusters(p.core_embeddings, target_cluster_size=preferred_cluster_size)
+            if y0 is None:
+                continue
 
-                required_next_update = True
+            original_embeddings = p.core_embeddings
+            p.core_embeddings = original_embeddings[y0 == 0]
+            cluster_count = int(np.max(y0)) + 1
+            if cluster_count == 1:
+                continue
 
-                original_embeddings = p.core_embeddings
-                p.core_embeddings = original_embeddings[y0 == 0]
-                for i in range(1, cluster_count):
-                    p_sub = copy.deepcopy(p)
-                    p_sub.core_embeddings = original_embeddings[y0 == i]
-                    p_sub.person_id = self.__next_person_index
-                    self.__next_person_index += 1
-                    divided_persons.append(p_sub)
-                    original_person_id_map[p_sub.person_id] = original_person_id_map[p.person_id]
-
-            for p in divided_persons:
-                self.__persons[p.person_id] = p
+            target_person_ids.append(p.person_id)
+            for i in range(1, cluster_count):
+                p_sub = copy.deepcopy(p)
+                p_sub.core_embeddings = original_embeddings[y0 == i]
+                p_sub.person_id = self.__next_person_index
+                self.__next_person_index += 1
+                self.__persons[p_sub.person_id] = p_sub
+                original_person_id_map[p_sub.person_id] = original_person_id_map[p.person_id]
+                target_person_ids.append(p_sub.person_id)
 
         return original_person_id_map
 
@@ -495,11 +502,11 @@ class EmbeddingDatabase:
             original_person_id_map = {}
             removed_embeddings_store = []
             if reduce_embeddings:
+                original_person_id_map = self.__reduce_person_embeddings(
+                    self.__preferred_person_size, self.__distance_threshold_for_person, removed_embeddings_store)
                 self.__reduce_cluster_embeddings(
                     self.__preferred_cluster_size, self.__preferred_cluster_size_scale,
                     self.__distance_threshold_for_cluster, removed_embeddings_store)
-                original_person_id_map = self.__reduce_person_embeddings(
-                    self.__preferred_person_size, self.__distance_threshold_for_person, removed_embeddings_store)
 
             x0 = self.__get_all_embeddings_x(include_person=reduce_embeddings)
             if len(x0) == 0:
@@ -1090,7 +1097,9 @@ def _op_reconstruct_common(input_file_name, db_opt, inherit_persons, manipulator
     with open(input_file_name, "rb") as f:
         d = pickle.load(f)
 
+    logging.info("%s loaded, generating map..." % input_file_name)
     x0, x0m, x0h, cluster_emb_len = _create_embedding_map_from_pickle(d)
+    logging.info("map generated")
 
     db = _create_embedding_database(db_opt, x0)
     if inherit_persons:
