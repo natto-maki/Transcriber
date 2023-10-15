@@ -1073,6 +1073,7 @@ class Configuration:
     emb_sb: EmbeddingDatabaseConfiguration = dataclasses.field(default_factory=EmbeddingDatabaseConfiguration)
     emb_pn: EmbeddingDatabaseConfiguration = dataclasses.field(default_factory=EmbeddingDatabaseConfiguration)
     reduce_embeddings_threshold_size: int = 0
+    update_person_core_embeddings_interval: int = 604800  # = 24h * 7; or -1
 
     qualify_soft_limit: float = 180.0
     qualify_hard_limit: float = 300.0
@@ -1219,7 +1220,8 @@ class Application:
             "preferred_cluster_size_scale": ec.preferred_cluster_size_scale,
             "distance_threshold_for_cluster": ec.distance_threshold_for_cluster,
             "preferred_person_size": ec.preferred_person_size,
-            "distance_threshold_for_person": ec.distance_threshold_for_person
+            "distance_threshold_for_person": ec.distance_threshold_for_person,
+            "update_person_core_embeddings_interval": c.update_person_core_embeddings_interval
         }
 
     @staticmethod
