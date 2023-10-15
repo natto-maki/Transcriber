@@ -68,6 +68,7 @@ ja:
   conf_emb_preferred_person_size: "(サイズ縮小処理) 特徴量ベクトルの話者あたり目標個数"
   conf_emb_distance_threshold_for_person: "(サイズ縮小処理) 話者データベースに保存された特徴量ベクトルの距離がこの数値以下だった場合は同一とみなして除去する"
   conf_reduce_embeddings_threshold_size: "保存されている特徴量ベクトルの数がこの数を超えた場合に、サイズ縮小処理を実行する"
+  conf_update_person_core_embeddings_interval: "定期的に登録された話者の特徴量ベクトルを更新する。0で更新しない [hours]"
   conf_openai_api_key: "OpenAI API Key (設定適用のためアプリケーションを再起動します)"
   conf_qualify_group: "要約作成の設定"
   conf_qualify_soft_limit: "文章グループの最大長(soft limit) [s]"

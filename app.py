@@ -706,7 +706,7 @@ def _apply_configuration(
         f_conf_vad_wakeup_peak_threshold_db, f_conf_vad_wakeup_release,
         f_conf_embedding_type, f_conf_transcribe_min_duration, f_conf_transcribe_min_segment_duration,
         f_conf_keep_audio_file, f_conf_keep_audio_file_for,
-        f_conf_reduce_embeddings_threshold_size,
+        f_conf_reduce_embeddings_threshold_size, f_conf_update_person_core_embeddings_interval,
         f_conf_openai_api_key,
         f_conf_qualify_soft_limit, f_conf_qualify_hard_limit, f_conf_qualify_silent_interval,
         f_conf_qualify_merge_interval, f_conf_qualify_merge_threshold,
@@ -757,6 +757,8 @@ def _apply_configuration(
         emb_c.distance_threshold_for_person = f_conf_args.pop(0)
 
     conf.reduce_embeddings_threshold_size = int(f_conf_reduce_embeddings_threshold_size)
+    conf.update_person_core_embeddings_interval = f_conf_update_person_core_embeddings_interval * 3600 \
+        if f_conf_update_person_core_embeddings_interval > 0 else -1
 
     conf.qualify_soft_limit = f_conf_qualify_soft_limit
     conf.qualify_hard_limit = f_conf_qualify_hard_limit
@@ -1015,6 +1017,11 @@ def app_main(args=None):
                     f_conf_reduce_embeddings_threshold_size = gr.Slider(
                         label=i18n.t('app.conf_reduce_embeddings_threshold_size'),
                         minimum=0.0, maximum=30000.0, value=_conf.reduce_embeddings_threshold_size, step=1000.0)
+                    f_conf_update_person_core_embeddings_interval = gr.Slider(
+                        label=i18n.t('app.conf_update_person_core_embeddings_interval'),
+                        minimum=0.0, maximum=240.0, step=1.0,
+                        value=_conf.update_person_core_embeddings_interval // 3600
+                        if _conf.update_person_core_embeddings_interval > 0 else 0)
             with gr.Group():
                 f_conf_openai_api_key = gr.Textbox(
                     label=i18n.t("app.conf_openai_api_key"), type="password", value=_ui_conf.openai_api_key)
@@ -1069,7 +1076,7 @@ def app_main(args=None):
             f_conf_vad_wakeup_peak_threshold_db, f_conf_vad_wakeup_release,
             f_conf_embedding_type, f_conf_transcribe_min_duration, f_conf_transcribe_min_segment_duration,
             f_conf_keep_audio_file, f_conf_keep_audio_file_for,
-            f_conf_reduce_embeddings_threshold_size,
+            f_conf_reduce_embeddings_threshold_size, f_conf_update_person_core_embeddings_interval,
             f_conf_openai_api_key,
             f_conf_qualify_soft_limit, f_conf_qualify_hard_limit, f_conf_qualify_silent_interval,
             f_conf_qualify_merge_interval, f_conf_qualify_merge_threshold,

@@ -68,6 +68,7 @@ en:
   conf_emb_preferred_person_size: "(size reduction) Target number of feature vectors per speaker"
   conf_emb_distance_threshold_for_person: "(size reduction) Remove the feature vectors stored in the speaker database as identical if the distance between them is less than or equal to this value"
   conf_reduce_embeddings_threshold_size: "Run size reduction process when the number of stored feature vectors exceeds this number"
+  conf_update_person_core_embeddings_interval: "Periodically update the feature vectors of registered speakers; 0 means no update [hours]"
   conf_openai_api_key: "OpenAI API Key (application will be automatically restarted to apply the settings)"
   conf_qualify_group: "Settings for summarizer"
   conf_qualify_soft_limit: "Maximum length of sentence group (soft limit) [s]"
