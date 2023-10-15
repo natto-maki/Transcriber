@@ -309,9 +309,13 @@ def _qualify_procedure(sentences: list[t.Sentence], opt: llm.LmOptions) -> t.Qua
 
     try:
         openai_opt = (opt.options[llm.handler_openai] if llm.handler_openai in opt.options else llm.OpenAiOptions())
-        corrected = _correct_sentences_with_embeddings(sentences, openai_opt.model_for_step1, opt) \
-            if has_embedding else _correct_sentences_no_embeddings(sentences, openai_opt.model_for_step1, opt)
-        summaries, action_items = _summarize(corrected, openai_opt.model_for_step2, opt)
+        if openai_opt.model_for_step1 == "disabled":
+            summaries, action_items = _qualify(sentences, openai_opt.model_for_step2, opt)
+        else:
+            corrected = _correct_sentences_with_embeddings(sentences, openai_opt.model_for_step1, opt) \
+                if has_embedding else _correct_sentences_no_embeddings(sentences, openai_opt.model_for_step1, opt)
+            summaries, action_items = _summarize(corrected, openai_opt.model_for_step2, opt)
+
     except openai.error.AuthenticationError:
         return t.QualifiedResult(
             corrected_sentences=sentences,

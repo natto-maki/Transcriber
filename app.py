@@ -1058,7 +1058,7 @@ def app_main(args=None):
                     f_conf_qualify_llm_model_name_step1 = gr.Dropdown(
                         label=i18n.t('app.conf_qualify_llm_model_name_step1'),
                         multiselect=False, allow_custom_value=False,
-                        choices=llm.OpenAiOptions.get_models(),
+                        choices=["disabled"] + llm.OpenAiOptions.get_models(),
                         value=lm_options_openai.model_for_step1)
                     f_conf_qualify_llm_model_name_step2 = gr.Dropdown(
                         label=i18n.t('app.conf_qualify_llm_model_name_step2'),
