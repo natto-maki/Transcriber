@@ -688,6 +688,18 @@ def _resolve_embedding_type(name: str | None):
     return name if name == "speechbrain" or name == "pyannote" else None
 
 
+def _encode_list_item_with_disabled(value):
+    return value if value != "disabled" else i18n.t('app.conf_disabled')
+
+
+def _encode_list_with_disabled(values):
+    return [_encode_list_item_with_disabled(value) for value in values]
+
+
+def _decode_list_item_with_disabled(value):
+    return value if value != i18n.t('app.conf_disabled') else "disabled"
+
+
 def _find_plugins():
     return [plugin_name for dir_name, plugin_name in _app.find_installed_plugins()]
 
@@ -770,10 +782,10 @@ def _apply_configuration(
 
     conf.lm_options = llm.LmOptions(
         input_language=f_conf_input_language, output_language=f_conf_output_language,
-        handler=f_conf_lm_handler,
+        handler=_decode_list_item_with_disabled(f_conf_lm_handler),
         options={
             llm.handler_openai: llm.OpenAiOptions(
-                model_for_step1=f_conf_qualify_llm_model_name_step1,
+                model_for_step1=_decode_list_item_with_disabled(f_conf_qualify_llm_model_name_step1),
                 model_for_step2=f_conf_qualify_llm_model_name_step2),
             llm.handler_llama_cpp: llm.LlamaCppOptions(model=f_conf_lm_llama_cpp_model)
         })
@@ -1052,14 +1064,15 @@ def app_main(args=None):
                     f_conf_lm_handler = gr.Dropdown(
                         label=i18n.t('app.conf_lm_handler'),
                         multiselect=False, allow_custom_value=False,
-                        choices=llm.handlers, value=_conf.lm_options.handler)
+                        choices=_encode_list_with_disabled(llm.handlers),
+                        value=_encode_list_item_with_disabled(_conf.lm_options.handler))
 
                     lm_options_openai = _conf.lm_options.options[llm.handler_openai]
                     f_conf_qualify_llm_model_name_step1 = gr.Dropdown(
                         label=i18n.t('app.conf_qualify_llm_model_name_step1'),
                         multiselect=False, allow_custom_value=False,
-                        choices=["disabled"] + llm.OpenAiOptions.get_models(),
-                        value=lm_options_openai.model_for_step1)
+                        choices=_encode_list_with_disabled(["disabled"] + llm.OpenAiOptions.get_models()),
+                        value=_encode_list_item_with_disabled(lm_options_openai.model_for_step1))
                     f_conf_qualify_llm_model_name_step2 = gr.Dropdown(
                         label=i18n.t('app.conf_qualify_llm_model_name_step2'),
                         multiselect=False, allow_custom_value=False,

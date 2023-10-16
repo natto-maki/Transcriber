@@ -81,4 +81,5 @@ en:
   conf_qualify_llm_model_name_step1: "(OpenAI) LLM model for text correction"
   conf_qualify_llm_model_name_step2: "(OpenAI) LLM model for summarization"
   conf_lm_llama_cpp_model: "(Llama.cpp) LLM model"
+  conf_disabled: "disabled"
   qualify_llm_authentication_error: "(Analysis aborted due to network or authentication problems)"

@@ -81,4 +81,5 @@ ja:
   conf_qualify_llm_model_name_step1: "(OpenAI) 訂正用モデル"
   conf_qualify_llm_model_name_step2: "(OpenAI) 要約生成用モデル"
   conf_lm_llama_cpp_model: "(Llama.cpp) モデル"
+  conf_disabled: "無効にする"
   qualify_llm_authentication_error: "(通信または認証の問題により解析を中断しました)"
