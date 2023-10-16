@@ -24,7 +24,7 @@ import iso639
 
 import tools
 import main_types as t
-import llm_openai as llm
+import llm
 import emb_db
 import main
 import transcriber_plugin as pl
@@ -688,6 +688,18 @@ def _resolve_embedding_type(name: str | None):
     return name if name == "speechbrain" or name == "pyannote" else None
 
 
+def _encode_list_item_with_disabled(value):
+    return value if value != "disabled" else i18n.t('app.conf_disabled')
+
+
+def _encode_list_with_disabled(values):
+    return [_encode_list_item_with_disabled(value) for value in values]
+
+
+def _decode_list_item_with_disabled(value):
+    return value if value != i18n.t('app.conf_disabled') else "disabled"
+
+
 def _find_plugins():
     return [plugin_name for dir_name, plugin_name in _app.find_installed_plugins()]
 
@@ -710,7 +722,9 @@ def _apply_configuration(
         f_conf_openai_api_key,
         f_conf_qualify_soft_limit, f_conf_qualify_hard_limit, f_conf_qualify_silent_interval,
         f_conf_qualify_merge_interval, f_conf_qualify_merge_threshold,
+        f_conf_lm_handler,
         f_conf_qualify_llm_model_name_step1, f_conf_qualify_llm_model_name_step2,
+        f_conf_lm_llama_cpp_model,
         *f_conf_args):
 
     global _ui_conf
@@ -766,11 +780,15 @@ def _apply_configuration(
     conf.qualify_merge_interval = f_conf_qualify_merge_interval
     conf.qualify_merge_threshold = f_conf_qualify_merge_threshold
 
-    conf.llm_opt = llm.QualifyOptions(
+    conf.lm_options = llm.LmOptions(
         input_language=f_conf_input_language, output_language=f_conf_output_language,
-        model_for_step1=f_conf_qualify_llm_model_name_step1,
-        model_for_step2=f_conf_qualify_llm_model_name_step2
-    )
+        handler=_decode_list_item_with_disabled(f_conf_lm_handler),
+        options={
+            llm.handler_openai: llm.OpenAiOptions(
+                model_for_step1=_decode_list_item_with_disabled(f_conf_qualify_llm_model_name_step1),
+                model_for_step2=f_conf_qualify_llm_model_name_step2),
+            llm.handler_llama_cpp: llm.LlamaCppOptions(model=f_conf_lm_llama_cpp_model)
+        })
 
     conf.disabled_plugins = [plugin for plugin in _find_plugins() if plugin not in f_conf_enable_plugins]
 
@@ -908,7 +926,7 @@ def app_main(args=None):
                 f_conf_output_language = gr.Dropdown(
                     label=i18n.t('app.conf_output_language'),
                     multiselect=False, allow_custom_value=False,
-                    choices=["en", "ja"], value=_conf.llm_opt.output_language)
+                    choices=["en", "ja"], value=_conf.lm_options.output_language)
             with gr.Group():
                 f_conf_ui_language = gr.Dropdown(
                     label=i18n.t('app.conf_ui_language'),
@@ -1042,17 +1060,30 @@ def app_main(args=None):
                         label=i18n.t('app.conf_qualify_merge_threshold'),
                         minimum=0.1, maximum=0.9, value=_conf.qualify_merge_threshold, step=0.01)
 
-                    llm_model_choices = ["gpt-4-0613", "gpt-4-0314", "gpt-3.5-turbo-0613"]
+                with gr.Accordion(i18n.t('app.conf_lm_group'), open=False):
+                    f_conf_lm_handler = gr.Dropdown(
+                        label=i18n.t('app.conf_lm_handler'),
+                        multiselect=False, allow_custom_value=False,
+                        choices=_encode_list_with_disabled(llm.handlers),
+                        value=_encode_list_item_with_disabled(_conf.lm_options.handler))
+
+                    lm_options_openai = _conf.lm_options.options[llm.handler_openai]
                     f_conf_qualify_llm_model_name_step1 = gr.Dropdown(
                         label=i18n.t('app.conf_qualify_llm_model_name_step1'),
                         multiselect=False, allow_custom_value=False,
-                        choices=llm_model_choices,
-                        value=_conf.llm_opt.model_for_step1)
+                        choices=_encode_list_with_disabled(["disabled"] + llm.OpenAiOptions.get_models()),
+                        value=_encode_list_item_with_disabled(lm_options_openai.model_for_step1))
                     f_conf_qualify_llm_model_name_step2 = gr.Dropdown(
                         label=i18n.t('app.conf_qualify_llm_model_name_step2'),
                         multiselect=False, allow_custom_value=False,
-                        choices=llm_model_choices,
-                        value=_conf.llm_opt.model_for_step2)
+                        choices=llm.OpenAiOptions.get_models(),
+                        value=lm_options_openai.model_for_step2)
+
+                    f_conf_lm_llama_cpp_model = gr.Dropdown(
+                        label=i18n.t('app.conf_lm_llama_cpp_model'),
+                        multiselect=False, allow_custom_value=False,
+                        choices=llm.LlamaCppOptions.get_models(),
+                        value=_conf.lm_options.options[llm.handler_llama_cpp].model)
 
         f_text.change(None, None, None, _js=move_to_last_js)
         f_history_selector.select(_update_history, [f_history_selector], [f_history_text])
@@ -1080,7 +1111,9 @@ def app_main(args=None):
             f_conf_openai_api_key,
             f_conf_qualify_soft_limit, f_conf_qualify_hard_limit, f_conf_qualify_silent_interval,
             f_conf_qualify_merge_interval, f_conf_qualify_merge_threshold,
+            f_conf_lm_handler,
             f_conf_qualify_llm_model_name_step1, f_conf_qualify_llm_model_name_step2,
+            f_conf_lm_llama_cpp_model,
             *f_conf_args], [f_conf_apply, f_reboot_flag]).then(
             _post_apply_configuration, [f_reboot_flag], None,
             _js="(reboot) => reboot ? window.setTimeout(function() { window.location.reload() }, 5000) : 0")

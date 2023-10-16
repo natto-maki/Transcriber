@@ -14,8 +14,10 @@ import i18n
 
 import main_types as t
 import tools
+import llm
+import llm_tools
 
-implied_tokens_per_request = 3
+_implied_tokens_per_request = 3
 
 
 def _num_tokens_from_messages(messages, model: str):
@@ -64,7 +66,8 @@ def _num_tokens_from_messages(messages, model: str):
 
 
 def _num_tokens_from_message(role: str, content: str, model: str):
-    return _num_tokens_from_messages([{"role": role, "content": content}], model) - implied_tokens_per_request
+    return (_num_tokens_from_messages([{"role": role, "content": content}], model)
+            - _implied_tokens_per_request)
 
 
 def _check_token_limits(messages, model_name):
@@ -118,6 +121,7 @@ def _invoke_with_retry(messages, model_name: str, post_process=None):
             " messages = %s, last response = \"%s\"" % (json.dumps(messages, indent=2, ensure_ascii=False), r0))
 
 
+# deprecated. Keep definitions in order to be able to read configuration files created in older versions.
 @dataclasses.dataclass
 class QualifyOptions:
     input_language: str = "ja"
@@ -207,7 +211,7 @@ _output_example_descriptor_for_p1 = {
 }
 
 
-def _qualify_p0_system(opt: QualifyOptions, with_embeddings: bool):
+def _qualify_p0_system(opt: llm.LmOptions, with_embeddings: bool):
     return (_qualify_p0_template_with_embeddings if with_embeddings else _qualify_p0_template_no_embeddings) % {
         "source_language_descriptor": _source_language_descriptor[opt.input_language],
         "output_language_descriptor": _output_language_descriptor_for_p0[opt.output_language][
@@ -215,35 +219,21 @@ def _qualify_p0_system(opt: QualifyOptions, with_embeddings: bool):
     }
 
 
-def _qualify_p1_system(opt: QualifyOptions):
+def _qualify_p1_system(opt: llm.LmOptions):
     return _qualify_p1_template % {
         "output_example_descriptor": _output_example_descriptor_for_p1[opt.output_language]
     }
 
 
-def _qualify_p2_system(opt: QualifyOptions):
+def _qualify_p2_system(opt: llm.LmOptions):
     return _qualify_p2_template % {
         "source_language_descriptor": _source_language_descriptor[opt.input_language],
         "output_example_descriptor": _output_example_descriptor_for_p1[opt.output_language]
     }
 
 
-def _get_name(s: t.Sentence):
-    return s.person_name if s.person_id != -1 else t.unknown_person_name
-
-
-def _aggregate_sentences_no_embeddings(sentences: list[t.Sentence]):
-    return " ".join([s.text for s in sentences if s.sentence_type == t.SentenceType.Sentence])
-
-
-def _aggregate_sentences_with_embeddings(sentences: list[t.Sentence]):
-    return "\n".join([
-        _get_name(s) + ": " + s.text.replace("\n", "\n  ")
-        for s in sentences if s.sentence_type == t.SentenceType.Sentence])
-
-
-def _correct_sentences_no_embeddings(sentences: list[t.Sentence], model_name: str, opt: QualifyOptions) -> str:
-    text = _aggregate_sentences_no_embeddings(sentences)
+def _correct_sentences_no_embeddings(sentences: list[t.Sentence], model_name: str, opt: llm.LmOptions) -> str:
+    text = llm_tools.aggregate_sentences_no_embeddings(sentences)
     if len(text) == 0:
         return ""
 
@@ -256,9 +246,9 @@ def _correct_sentences_no_embeddings(sentences: list[t.Sentence], model_name: st
 
 
 def _correct_sentences_with_embeddings(
-        sentences: list[t.Sentence], model_name: str, opt: QualifyOptions) -> list[t.Sentence]:
+        sentences: list[t.Sentence], model_name: str, opt: llm.LmOptions) -> list[t.Sentence]:
 
-    text = _aggregate_sentences_with_embeddings(sentences)
+    text = llm_tools.aggregate_sentences_with_embeddings(sentences)
     if len(text) == 0:
         return []
 
@@ -267,7 +257,7 @@ def _correct_sentences_with_embeddings(
         {"role": "user", "content": text}
     ]
 
-    name_to_id = {_get_name(s): s.person_id for s in sentences if s.person_id != -1}
+    name_to_id = {llm_tools.get_name(s): s.person_id for s in sentences if s.person_id != -1}
 
     def _post_process(r0_):
         r1_ = re.findall(r"([^:]+): (.+)\n*", r0_)
@@ -281,7 +271,7 @@ def _correct_sentences_with_embeddings(
 
 
 def _summarize_sub(sentences: list[t.Sentence] | str, model_name: str, prompt: str) -> tuple[str, list[str]]:
-    text = _aggregate_sentences_with_embeddings(sentences) if isinstance(sentences, list) else sentences
+    text = llm_tools.aggregate_sentences_with_embeddings(sentences) if isinstance(sentences, list) else sentences
     if len(text) == 0:
         return "", []
 
@@ -306,24 +296,26 @@ def _summarize_sub(sentences: list[t.Sentence] | str, model_name: str, prompt: s
     return r1[0], r2
 
 
-def _summarize(sentences: list[t.Sentence] | str, model_name: str, opt: QualifyOptions) -> tuple[str, list[str]]:
+def _summarize(sentences: list[t.Sentence] | str, model_name: str, opt: llm.LmOptions) -> tuple[str, list[str]]:
     return _summarize_sub(sentences, model_name, _qualify_p1_system(opt))
 
 
-def _qualify(sentences: list[t.Sentence], model_name: str, opt: QualifyOptions) -> tuple[str, list[str]]:
+def _qualify(sentences: list[t.Sentence], model_name: str, opt: llm.LmOptions) -> tuple[str, list[str]]:
     return _summarize_sub(sentences, model_name, _qualify_p2_system(opt))
 
 
-def _qualify_procedure(sentences: list[t.Sentence], opt: QualifyOptions | None = None) -> t.QualifiedResult:
-    if opt is None:
-        opt = QualifyOptions()
-
+def _qualify_procedure(sentences: list[t.Sentence], opt: llm.LmOptions) -> t.QualifiedResult:
     has_embedding = (len([None for s in sentences if s.embedding is not None]) != 0)
 
     try:
-        corrected = _correct_sentences_with_embeddings(sentences, opt.model_for_step1, opt) \
-            if has_embedding else _correct_sentences_no_embeddings(sentences, opt.model_for_step1, opt)
-        summaries, action_items = _summarize(corrected, opt.model_for_step2, opt)
+        openai_opt = (opt.options[llm.handler_openai] if llm.handler_openai in opt.options else llm.OpenAiOptions())
+        if openai_opt.model_for_step1 == "disabled":
+            summaries, action_items = _qualify(sentences, openai_opt.model_for_step2, opt)
+        else:
+            corrected = _correct_sentences_with_embeddings(sentences, openai_opt.model_for_step1, opt) \
+                if has_embedding else _correct_sentences_no_embeddings(sentences, openai_opt.model_for_step1, opt)
+            summaries, action_items = _summarize(corrected, openai_opt.model_for_step2, opt)
+
     except openai.error.AuthenticationError:
         return t.QualifiedResult(
             corrected_sentences=sentences,
@@ -338,9 +330,7 @@ def _qualify_procedure(sentences: list[t.Sentence], opt: QualifyOptions | None =
     )
 
 
-def qualify(
-        sentences: list[t.Sentence],
-        opt: QualifyOptions | None = None, timeout=180.0) -> tools.AsyncCallFuture:
+def _handle_qualify(sentences: list[t.Sentence], opt: llm.LmOptions, timeout) -> tools.AsyncCallFuture:
     return tools.async_call(
         _qualify_procedure, [s.clone() for s in sentences], dataclasses.replace(opt), timeout=timeout)
 
@@ -383,7 +373,7 @@ def _low_latency_interpretation_caller(ct):
     ct[0].release()
 
 
-def low_latency_interpretation(in_language: str | None, out_language: str, text: str) -> str:
+def _handle_low_latency_interpretation(in_language: str | None, out_language: str, text: str) -> str:
     if not _interpretation_task_count.acquire(blocking=False):
         return "[skip]"
     ct = [th.Semaphore(0), None, in_language, out_language, text]
@@ -391,3 +381,16 @@ def low_latency_interpretation(in_language: str | None, out_language: str, text:
     if ct[0].acquire(timeout=15.0):
         return ct[1]
     return "[timeout]"
+
+
+class _OpenAiHandler(llm.Handler):
+    def qualify(self, sentences: list[t.Sentence], opt: llm.LmOptions, timeout) -> tools.AsyncCallFuture:
+        return _handle_qualify(sentences, opt, timeout)
+
+    def low_latency_interpretation(self, in_language: str | None, out_language: str, text: str) -> str:
+        return _handle_low_latency_interpretation(in_language, out_language, text)
+
+
+def get_handler(opt: llm.LmOptions):
+    _ = opt
+    return _OpenAiHandler()
