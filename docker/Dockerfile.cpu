@@ -2,8 +2,8 @@
 # Dockerfile for Transcriber
 #
 # build & run example:
-#   docker build -t transcriber:1.0 -f Dockerfile.linux_gpu --build-arg branch=develop .
-#   docker run -it -p7860:7860 --device /dev/snd:/dev/snd --name transcriber transcriber:1.0 /bin/bash
+#   docker build -t transcriber/cpu:1.0 -f docker/Dockerfile.cpu --build-arg branch=develop .
+#   docker run -it -p7860:7860 --device /dev/snd:/dev/snd --name transcriber transcriber/cpu:1.0 /bin/sh -c 'cd ~/Transcriber; python3 app.py'
 #
 
 FROM ubuntu:20.04
@@ -37,7 +37,6 @@ RUN cd /root \
 
 ARG branch="main"
 RUN cd /root && git clone -b ${branch} https://github.com/natto-maki/Transcriber.git
-
 RUN cd /root/Transcriber && pip3 install -r requirements.txt
 
 EXPOSE 7860
