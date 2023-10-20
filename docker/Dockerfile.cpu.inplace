@@ -1,0 +1,62 @@
+#
+# Dockerfile for Transcriber
+#
+# build & run example:
+#   docker build -t transcriber/cpu.inplace:1.0 -f docker/Dockerfile.cpu.inplace --build-arg USER_NAME=$(id -un) --build-arg GROUP_NAME=$(id -gn) --build-arg UID=$(id -u) --build-arg GID=$(id -g) .
+#   docker run -it --rm -p7860:7860 --device /dev/snd:/dev/snd -v .:/home/$(id -un) -u $(id -u):$(id -g) --group-add=audio --name transcriber transcriber/cpu.inplace:1.0 /bin/sh -c 'python3 app.py'
+#
+
+FROM ubuntu:20.04
+
+LABEL maintainer="NattoMaki <negi.in.natto.maki@gmail.com>"
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y build-essential libbz2-dev libdb-dev \
+        libreadline-dev libffi-dev libgdbm-dev liblzma-dev \
+        libncursesw5-dev libsqlite3-dev libssl-dev \
+        zlib1g-dev uuid-dev \
+        wget git \
+        python3-dev python3-pip \
+        python3-numpy python3-scipy python3-matplotlib \
+    && apt-get clean
+
+# Build the latest stable version of PortAudio from source, since libportaudio2 installed by apt causes some issues
+RUN cd /root \
+    && apt install -y libasound2-dev \
+    && wget https://files.portaudio.com/archives/pa_stable_v190700_20210406.tgz \
+    && tar xf pa_stable_v190700_20210406.tgz \
+    && cd portaudio/ \
+    && ./configure \
+    && make -j8 \
+    && make install \
+    && ldconfig
+
+ARG python_version="3.11.6"
+RUN cd /root \
+    && wget https://www.python.org/ftp/python/${python_version}/Python-${python_version}.tar.xz \
+    && tar xJf Python-${python_version}.tar.xz \
+    && cd Python-${python_version} \
+    && ./configure \
+    && make -j8 \
+    && make install \
+    && cd .. \
+    && rm Python-${python_version}.tar.xz \
+    && rm -rf Python-${python_version}
+
+COPY requirements.txt /root/
+RUN cd /root/ && pip3 install -r requirements.txt
+
+ARG USER_NAME
+ARG GROUP_NAME
+ARG UID
+ARG GID
+ARG PASSWORD=password
+RUN groupadd -g $GID $GROUP_NAME && \
+    useradd -m -s /bin/bash -u $UID -g $GID -G audio $USER_NAME && \
+    echo $USER_NAME:$PASSWORD | chpasswd
+USER $USER_NAME
+WORKDIR /home/$USER_NAME/
+
+EXPOSE 7860

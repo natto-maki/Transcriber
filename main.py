@@ -1,6 +1,3 @@
-"""
-Transcriber
-"""
 import re
 import sys
 import os
@@ -26,6 +23,13 @@ import emb_db as db
 import llm
 import transcriber
 import transcriber_plugin as pl
+
+
+# Interpreter's version check
+_version_number = sys.version_info.major * 1000000 + sys.version_info.minor * 1000 + sys.version_info.micro
+if _version_number < 3011004:
+    logging.fatal("Required Python >= 3.11.4")
+    quit(1)
 
 
 # workaround for an error on x86 Mac

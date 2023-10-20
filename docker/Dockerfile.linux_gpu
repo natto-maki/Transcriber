@@ -1,0 +1,55 @@
+#
+# Dockerfile for Transcriber
+#
+# build & run example:
+#   docker build -t transcriber/linux_gpu:1.0 -f docker/Dockerfile.linux_gpu --build-arg branch=develop .
+#   docker run -it --gpus device=0 --shm-size=1g -p7860:7860 --device /dev/snd:/dev/snd --name transcriber transcriber/linux_gpu:1.0 /bin/sh -c 'cd ~/Transcriber; python3 app.py'
+#
+
+FROM nvidia/cuda:11.7.1-devel-ubuntu20.04
+
+LABEL maintainer="NattoMaki <negi.in.natto.maki@gmail.com>"
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y build-essential libbz2-dev libdb-dev \
+        libreadline-dev libffi-dev libgdbm-dev liblzma-dev \
+        libncursesw5-dev libsqlite3-dev libssl-dev \
+        zlib1g-dev uuid-dev \
+        wget git \
+        python3-dev python3-pip \
+        python3-numpy python3-scipy python3-matplotlib \
+    && apt-get clean
+
+# Build the latest stable version of PortAudio from source, since libportaudio2 installed by apt causes some issues
+RUN cd /root \
+    && apt install -y libasound2-dev \
+    && wget https://files.portaudio.com/archives/pa_stable_v190700_20210406.tgz \
+    && tar xf pa_stable_v190700_20210406.tgz \
+    && cd portaudio/ \
+    && ./configure \
+    && make -j8 \
+    && make install \
+    && ldconfig
+
+ARG python_version="3.11.6"
+RUN cd /root \
+    && wget https://www.python.org/ftp/python/${python_version}/Python-${python_version}.tar.xz \
+    && tar xJf Python-${python_version}.tar.xz \
+    && cd Python-${python_version} \
+    && ./configure \
+    && make -j8 \
+    && make install \
+    && cd .. \
+    && rm Python-${python_version}.tar.xz \
+    && rm -rf Python-${python_version}
+
+ARG branch="main"
+RUN cd /root && git clone -b ${branch} https://github.com/natto-maki/Transcriber.git
+RUN cd /root/Transcriber && pip3 install -r requirements.txt
+
+RUN apt install -y cmake clang lldb lld wget
+RUN CUDACXX=/usr/local/cuda/bin/nvcc CMAKE_ARGS="-DLLAMA_CUBLAS=on" FORCE_CMAKE=1 pip3 install llama-cpp-python
+
+EXPOSE 7860
