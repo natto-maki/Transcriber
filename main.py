@@ -1145,7 +1145,7 @@ class _WrapSegmentCallback:
 class Application:
     __plugin_instance_cache = {}
 
-    def __init__(self, conf=Configuration(), ui_language="en"):
+    def __init__(self, conf=Configuration(), ui_language="en", audio_input=None):
         self.__conf = dataclasses.replace(conf)
         self.__ui_language = ui_language
 
@@ -1165,7 +1165,7 @@ class Application:
 
         self.__audio: dict[str, AudioInput] = {
             name: AudioInput(selected_device=next(d for d in devices if d["name"] == name)["index"])
-            for name in self.__conf.input_devices}
+            for name in self.__conf.input_devices} if audio_input is None else {"_external": audio_input}
 
         self.__audio_mux = MultipleAudioInput(list(self.__audio.values())) if len(self.__audio) >= 2 \
             else next(iter(self.__audio.values()))

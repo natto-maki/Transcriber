@@ -1,5 +1,5 @@
 """
-以下が必要かも
+may be required on some environments:
 export LD_LIBRARY_PATH=/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib
 """
 import logging
