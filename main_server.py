@@ -1,5 +1,6 @@
 import time
 import threading as th
+import concurrent.futures
 from collections import deque
 import dataclasses
 
@@ -83,6 +84,7 @@ class RemoteAudioInput(main.ConcurrentContextManagerImpl):
 class Session:
     audio_input: RemoteAudioInput | None = None
     app: main.Application | None = None
+    app_thread: concurrent.futures.ThreadPoolExecutor | None = None
     last_access: float = 0.0
 
 
@@ -92,21 +94,44 @@ _lock0 = th.Lock()
 _sessions: dict[str, Session] = {}
 
 
+def _start_app(s: Session):
+    s.app = main.Application(audio_input=s.audio_input)
+    s.app.open()
+
+
+def _stop_app(s: Session):
+    if s.app.is_opened():
+        s.app.close()
+
+
+def _push(s: Session, audio_frame: np.ndarray):
+    s.audio_input.push(audio_frame)
+
+
+def _check_session(session_id: str) -> Session:
+    with _lock0:
+        if session_id in _sessions:
+            return _sessions[session_id]
+        s = Session()
+        s.audio_input = RemoteAudioInput()
+        s.app_thread = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        _sessions[session_id] = s
+
+    s.app_thread.submit(_start_app, s)
+    return s
+
+
 @_app.get("/open/{session_id}")
 def open_session(session_id: str):
-    with _lock0:
-        if session_id not in _sessions:
-            audio_input = RemoteAudioInput()
-            # TODO yaml
-            _sessions[session_id] = Session(
-                audio_input=audio_input,
-                app=main.Application(audio_input=audio_input))
+    _check_session(session_id)
 
 
 @_app.get("/close/{session_id}")
 def close_session(session_id: str):
     with _lock0:
         if session_id in _sessions:
+            s = _sessions[session_id]
+            s.app_thread.submit(_stop_app, s)
             del _sessions[session_id]
 
 
@@ -116,4 +141,5 @@ class AudioFrame(BaseModel):
 
 @_app.get("/push/{session_id}")
 def push_audio_frame(session_id: str, audio_frame: AudioFrame):
-    pass
+    s = _check_session(session_id)
+    s.app_thread.submit(_push, s, np.array([v / 32768 for v in audio_frame.samples], dtype=np.float32))
