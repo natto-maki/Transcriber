@@ -1,0 +1,60 @@
+!!python/object:main.Configuration
+device: cpu
+disabled_plugins:
+- simple_memo
+emb_pn: !!python/object:main.EmbeddingDatabaseConfiguration
+  dbscan_eps: 0.35
+  dbscan_min_samples: 6
+  distance_threshold_for_cluster: 0.1
+  distance_threshold_for_person: 0.1
+  min_matched_embeddings_to_inherit_cluster: 6
+  min_matched_embeddings_to_match_person: 6
+  preferred_cluster_size: 100
+  preferred_cluster_size_scale: 0.75
+  preferred_person_size: 100
+  threshold: 0.6
+emb_sb: !!python/object:main.EmbeddingDatabaseConfiguration
+  dbscan_eps: 0.35
+  dbscan_min_samples: 6
+  distance_threshold_for_cluster: 0.1
+  distance_threshold_for_person: 0.1
+  min_matched_embeddings_to_inherit_cluster: 6
+  min_matched_embeddings_to_match_person: 6
+  preferred_cluster_size: 100
+  preferred_cluster_size_scale: 0.75
+  preferred_person_size: 100
+  threshold: 0.6
+embedding_type: null
+enable_auto_detect_language: false
+enable_simultaneous_interpretation: false
+input_devices:
+- _external
+keep_audio_file_for: -1.0
+language: ja
+lm_options: !!python/object:llm.LmOptions
+  handler: disabled
+  input_language: ja
+  options:
+    Llama.cpp: !!python/object:llm.LlamaCppOptions
+      model: ggml-model-q4_m
+    OpenAI: !!python/object:llm.OpenAiOptions
+      model_for_step1: gpt-3.5-turbo-0613
+      model_for_step2: gpt-4-0613
+  output_language: ja
+qualify_hard_limit: 300.0
+qualify_merge_interval: 10.0
+qualify_merge_threshold: 0.3
+qualify_silent_interval: 20.0
+qualify_soft_limit: 180.0
+reduce_embeddings_threshold_size: 0
+transcribe_min_duration: 2.0
+transcribe_min_segment_duration: 1.0
+update_person_core_embeddings_interval: 604800
+vad_hard_limit_length: 60.0
+vad_post_apply: 0.2
+vad_post_hold: 0.5
+vad_pre_hold: 0.05
+vad_soft_limit_length: 30.0
+vad_threshold: 0.5
+vad_wakeup_peak_threshold_db: -48.0
+vad_wakeup_release: 3.0

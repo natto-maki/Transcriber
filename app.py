@@ -802,9 +802,9 @@ def _apply_configuration(
 
     _ui_conf = ui_conf
     _restart(conf)
-    with tools.SafeWrite(os.path.join(main.data_dir_name, "config.pickle"), "wb") as f:
+    with tools.SafeWrite(os.path.join(main.default_data_dir_name, "config.pickle"), "wb") as f:
         pickle.dump({"conf": conf}, f.stream)
-    with tools.SafeWrite(os.path.join(main.data_dir_name, "ui_config.pickle"), "wb") as f:
+    with tools.SafeWrite(os.path.join(main.default_data_dir_name, "ui_config.pickle"), "wb") as f:
         pickle.dump({"conf": ui_conf}, f.stream)
 
     return gr.Button.update(
@@ -821,7 +821,7 @@ def _post_apply_configuration(f_reboot_flag):
 
 def _load_configuration():
     conf = main.Configuration()
-    conf_file_path = os.path.join(main.data_dir_name, "config.pickle")
+    conf_file_path = os.path.join(main.default_data_dir_name, "config.pickle")
     if os.path.isfile(conf_file_path):
         with open(conf_file_path, "rb") as f:
             d = pickle.load(f)
@@ -831,7 +831,7 @@ def _load_configuration():
 
 def _load_ui_configuration():
     conf = UiConfiguration()
-    conf_file_path = os.path.join(main.data_dir_name, "ui_config.pickle")
+    conf_file_path = os.path.join(main.default_data_dir_name, "ui_config.pickle")
     if os.path.isfile(conf_file_path):
         with open(conf_file_path, "rb") as f:
             d = pickle.load(f)
@@ -843,8 +843,8 @@ def app_main(args=None):
     global _app, _conf, _live_checker_thread
     _ = args
 
-    os.makedirs(main.data_dir_name, exist_ok=True)
-    tools.recover_files(main.data_dir_name)
+    os.makedirs(main.default_data_dir_name, exist_ok=True)
+    tools.recover_files(main.default_data_dir_name)
 
     _app = main.Application(_load_configuration(), _ui_conf.language)
     _conf = _app.get_current_configuration()

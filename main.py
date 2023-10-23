@@ -39,7 +39,7 @@ os.environ['KMP_DUPLICATE_LIB_OK'] = 'True'
 
 sampling_rate = common.sampling_rate
 frame_size = common.frame_size
-data_dir_name = "data"
+default_data_dir_name = "data"
 
 
 class ContextManagerImpl:
@@ -829,7 +829,8 @@ class DiarizationAndQualify(MultithreadContextManagerImpl):
 
         self._stream = stream.add_callback(self.__sentence_callback)
 
-        llm.ensure_model_is_ready(self.__lm_options)
+        if self.__lm_options.handler != llm.handler_disabled:
+            llm.ensure_model_is_ready(self.__lm_options)
 
     def __delayed_callback(self, gr_index: int):
         self._invoke_callback(gr_index)
@@ -1145,27 +1146,31 @@ class _WrapSegmentCallback:
 class Application:
     __plugin_instance_cache = {}
 
-    def __init__(self, conf=Configuration(), ui_language="en", audio_input=None):
+    def __init__(self, conf=Configuration(), ui_language="en", audio_input=None, data_dir_name=default_data_dir_name):
         self.__conf = dataclasses.replace(conf)
         self.__ui_language = ui_language
-
-        devices = AudioInput.query_valid_input_devices()
-        devices_by_name = {d["name"]: d for d in devices}
-        if self.__conf.input_devices is not None:
-            self.__conf.input_devices = [d for d in self.__conf.input_devices if d in devices_by_name.keys()]
-        if self.__conf.input_devices is None or len(self.__conf.input_devices) == 0:
-            default_index = sd.default.device[0]
-            default_device = next(d for d in devices if d["index"] == default_index)
-            self.__conf.input_devices = [default_device["name"]]
+        self.__data_dir_name = data_dir_name
+        os.makedirs(self.__data_dir_name, exist_ok=True)
 
         self.__conf.lm_options = dataclasses.replace(conf.lm_options) \
             if conf.lm_options is not None else llm.LmOptions()
         self.__conf.lm_options.fill_defaults()
         self.__conf.lm_options.input_language = self.__conf.language
 
-        self.__audio: dict[str, AudioInput] = {
-            name: AudioInput(selected_device=next(d for d in devices if d["name"] == name)["index"])
-            for name in self.__conf.input_devices} if audio_input is None else {"_external": audio_input}
+        if audio_input is None:
+            devices = AudioInput.query_valid_input_devices()
+            devices_by_name = {d["name"]: d for d in devices}
+            if self.__conf.input_devices is not None:
+                self.__conf.input_devices = [d for d in self.__conf.input_devices if d in devices_by_name.keys()]
+            if self.__conf.input_devices is None or len(self.__conf.input_devices) == 0:
+                default_index = sd.default.device[0]
+                default_device = next(d for d in devices if d["index"] == default_index)
+                self.__conf.input_devices = [default_device["name"]]
+            self.__audio: dict[str, AudioInput] = {
+                name: AudioInput(selected_device=devices_by_name[name]["index"]) for name in self.__conf.input_devices}
+        else:
+            self.__conf.input_devices = ["_external"]
+            self.__audio = {self.__conf.input_devices[0]: audio_input}
 
         self.__audio_mux = MultipleAudioInput(list(self.__audio.values())) if len(self.__audio) >= 2 \
             else next(iter(self.__audio.values()))
@@ -1182,7 +1187,7 @@ class Application:
             wakeup_release=self.__conf.vad_wakeup_release,
             keep_alive_interval=1.0)
 
-        self.__save_audio_dir = os.path.join(data_dir_name, "audio")
+        self.__save_audio_dir = os.path.join(self.__data_dir_name, "audio")
         os.makedirs(self.__save_audio_dir, exist_ok=True)
         self.__transcriber = Transcriber(
             self.__vad, device=self.__conf.device, language=self.__conf.language,
@@ -1193,7 +1198,7 @@ class Application:
             save_audio_dir=self.__save_audio_dir if self.__conf.keep_audio_file_for >= 0.0 else None)
 
         self.__db = db.HybridEmbeddingDatabase(
-            data_dir_name,
+            self.__data_dir_name,
             param_for_speechbrain=self.__get_embedding_database_param(self.__conf, self.__conf.emb_sb),
             param_for_pyannote=self.__get_embedding_database_param(self.__conf, self.__conf.emb_pn))
 
@@ -1203,7 +1208,7 @@ class Application:
         self.__qualifier_file_name = self.__get_qualifier_file_name()
         self.__qualifier = DiarizationAndQualify(
             self.__initial_diarization, self.__db,
-            file_name=os.path.join(data_dir_name, self.__qualifier_file_name),
+            file_name=os.path.join(self.__data_dir_name, self.__qualifier_file_name),
             soft_limit=self.__conf.qualify_soft_limit, hard_limit=self.__conf.qualify_hard_limit,
             silent_interval=self.__conf.qualify_silent_interval,
             merge_interval=self.__conf.qualify_merge_interval, merge_threshold=self.__conf.qualify_merge_threshold,
@@ -1262,7 +1267,7 @@ class Application:
                 try:
                     logging.info("Launching plugin \"%s\"" % dir_name)
                     m = importlib.import_module(".".join(os.path.split(dir_name)))
-                    plugin_data_dir = os.path.join(data_dir_name, "plugins", plugin_name)
+                    plugin_data_dir = os.path.join(self.__data_dir_name, "plugins", plugin_name)
                     os.makedirs(plugin_data_dir, exist_ok=True)
                     p: pl.Plugin = m.create(
                         __sampling_rate=sampling_rate, __ui_language=self.__ui_language, __data_dir=plugin_data_dir,
@@ -1391,20 +1396,18 @@ class Application:
     def ref_group(self, gr_index: int) -> t.SentenceGroup:
         return self.__qualifier.ref_group(gr_index)
 
-    @staticmethod
-    def list_history():
+    def list_history(self):
         ret = []
-        for file in glob.glob(os.path.join(data_dir_name, "q.*")):
+        for file in glob.glob(os.path.join(self.__data_dir_name, "q.*")):
             r0 = re.search(r"q.(\d{4})-(\d{2})-(\d{2}).pickle$", file)
             if r0 is not None:
                 ret.append(int(r0.group(1)) * 10000 + int(r0.group(2)) * 100 + int(r0.group(3)))
         ret.sort()
         return ret
 
-    @staticmethod
-    def open_history(date_index: int):
+    def open_history(self, date_index: int):
         file_name = "q.%04d-%02d-%02d.pickle" % (date_index // 10000, date_index // 100 % 100, date_index % 100)
-        file_name = os.path.join(data_dir_name, file_name)
+        file_name = os.path.join(self.__data_dir_name, file_name)
         if not os.path.isfile(file_name):
             raise ValueError("file \"%s\" not found")
         return Reader(file_name)

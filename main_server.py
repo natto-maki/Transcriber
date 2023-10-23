@@ -1,3 +1,5 @@
+import logging
+import os
 import time
 import threading as th
 import concurrent.futures
@@ -5,16 +7,20 @@ from collections import deque
 import dataclasses
 
 # noinspection PyPackageRequirements
-from fastapi import FastAPI
-# noinspection PyPackageRequirements
-from pydantic import BaseModel
+import grpc
+import main_server_service_pb2
+import main_server_service_pb2_grpc
+
 import numpy as np
+# noinspection PyPackageRequirements
+import yaml
 
 import common
 import main
 
 sampling_rate = common.sampling_rate
 frame_size = common.frame_size
+conf_file_name = "main_server_conf.yaml"
 
 
 class RemoteAudioInput(main.ConcurrentContextManagerImpl):
@@ -82,64 +88,92 @@ class RemoteAudioInput(main.ConcurrentContextManagerImpl):
 
 @dataclasses.dataclass
 class Session:
+    session_id: str
     audio_input: RemoteAudioInput | None = None
     app: main.Application | None = None
-    app_thread: concurrent.futures.ThreadPoolExecutor | None = None
+    app_thread: concurrent.futures.ThreadPoolExecutor | None = None  # TODO should be use multiprocess
     last_access: float = 0.0
 
 
-_app = FastAPI()
+class Servicer(main_server_service_pb2_grpc.MainServerServiceServicer):
+    def __init__(self):
+        self.__lock0 = th.Lock()
+        self.__sessions: dict[str, Session] = {}
 
-_lock0 = th.Lock()
-_sessions: dict[str, Session] = {}
+        self.__conf = main.Configuration()
+        if os.path.isfile(conf_file_name):
+            with open(conf_file_name, mode="r") as f:
+                self.__conf = yaml.load(f, Loader=yaml.Loader)
+
+    def __start_app(self, s: Session, sm: th.Semaphore | None):
+        logging.info(s.session_id + ": attempting to open app")
+
+        s.app = main.Application(
+            conf=self.__conf, audio_input=s.audio_input, data_dir_name=os.path.join("data", s.session_id))
+
+        # with open(conf_file_name, mode="w") as f:
+        #     yaml.dump(s.app.get_current_configuration(), f)
+
+        s.app.open()
+        logging.info(s.session_id + ": app opened")
+        if sm is not None:
+            sm.release()
+
+    @staticmethod
+    def __stop_app(s: Session):
+        logging.info(s.session_id + ": attempting to close app")
+        if s.app.is_opened():
+            s.app.close()
+        logging.info(s.session_id + ": app closed")
+
+    @staticmethod
+    def __push(s: Session, audio_frame: np.ndarray):
+        s.audio_input.push(audio_frame)
+
+    def __check_session(self, session_id: str, blocking=False) -> Session:
+        with self.__lock0:
+            if session_id in self.__sessions:
+                return self.__sessions[session_id]
+            s = Session(session_id)
+            s.audio_input = RemoteAudioInput()
+            s.app_thread = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            self.__sessions[session_id] = s
+
+        sm = th.Semaphore(0) if blocking else None
+        s.app_thread.submit(self.__start_app, s, sm)
+        if sm is not None:
+            sm.acquire()
+        return s
+
+    def Open(self, request, context):
+        self.__check_session(request.session_id, blocking=True)
+        return main_server_service_pb2.BaseResponse(result="")
+
+    def Close(self, request, context):
+        with self.__lock0:
+            if request.session_id in self.__sessions:
+                s = self.__sessions[request.session_id]
+                s.app_thread.submit(self.__stop_app, s)
+                del self.__sessions[request.session_id]
+        return main_server_service_pb2.BaseResponse(result="")
+
+    def Push(self, request, context):
+        s = self.__check_session(request.session_id)
+        s.app_thread.submit(self.__push, s, np.frombuffer(request.audio_data, dtype=np.float32))
+        return main_server_service_pb2.BaseResponse(result="")
 
 
-def _start_app(s: Session):
-    s.app = main.Application(audio_input=s.audio_input)
-    s.app.open()
+def serve():
+    port = "7861"
+    server = grpc.server(concurrent.futures.ThreadPoolExecutor(max_workers=10))
+    main_server_service_pb2_grpc.add_MainServerServiceServicer_to_server(Servicer(), server)
+    server.add_insecure_port("[::]:" + port)
+    server.start()
+    logging.info("Server started, listening on " + port)
+    server.wait_for_termination()
 
 
-def _stop_app(s: Session):
-    if s.app.is_opened():
-        s.app.close()
-
-
-def _push(s: Session, audio_frame: np.ndarray):
-    s.audio_input.push(audio_frame)
-
-
-def _check_session(session_id: str) -> Session:
-    with _lock0:
-        if session_id in _sessions:
-            return _sessions[session_id]
-        s = Session()
-        s.audio_input = RemoteAudioInput()
-        s.app_thread = concurrent.futures.ThreadPoolExecutor(max_workers=1)
-        _sessions[session_id] = s
-
-    s.app_thread.submit(_start_app, s)
-    return s
-
-
-@_app.get("/open/{session_id}")
-def open_session(session_id: str):
-    _check_session(session_id)
-
-
-@_app.get("/close/{session_id}")
-def close_session(session_id: str):
-    with _lock0:
-        if session_id in _sessions:
-            s = _sessions[session_id]
-            s.app_thread.submit(_stop_app, s)
-            del _sessions[session_id]
-
-
-class AudioFrame(BaseModel):
-    samples: list[int]
-
-
-@_app.get("/push/{session_id}")
-def push_audio_frame(session_id: str, audio_frame: AudioFrame):
-    s = _check_session(session_id)
-    s.app_thread.submit(_push, s, np.array([v / 32768 for v in audio_frame.samples], dtype=np.float32))
+if __name__ == "__main__":
+    logging.basicConfig(
+        format='%(asctime)s: %(name)s:%(funcName)s:%(lineno)d %(levelname)s: %(message)s', level=logging.INFO)
+    serve()

@@ -1,0 +1,26 @@
+// python3 -m grpc_tools.protoc -I./protos --python_out=. --pyi_out=. --grpc_python_out=. ./protos/main_server_service.proto
+
+syntax = "proto3";
+
+service MainServerService {
+    rpc Open(OpenRequest) returns (BaseResponse) {}
+    rpc Close(CloseRequest) returns (BaseResponse) {}
+    rpc Push(PushRequest) returns (BaseResponse) {}
+}
+
+message BaseResponse {
+    string result = 1;  // empty string means successfully completed
+}
+
+message OpenRequest {
+    string session_id = 1;
+}
+
+message CloseRequest {
+    string session_id = 1;
+}
+
+message PushRequest {
+    string session_id = 1;
+    bytes audio_data = 2;
+}
