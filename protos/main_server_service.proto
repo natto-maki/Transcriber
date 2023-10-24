@@ -6,6 +6,7 @@ service MainServerService {
     rpc Open(OpenRequest) returns (BaseResponse) {}
     rpc Close(CloseRequest) returns (BaseResponse) {}
     rpc Push(PushRequest) returns (BaseResponse) {}
+    rpc Read(ReadRequest) returns (ReadResponse) {}
 }
 
 message BaseResponse {
@@ -23,4 +24,17 @@ message CloseRequest {
 message PushRequest {
     string session_id = 1;
     bytes audio_data = 2;
+}
+
+message ReadRequest {
+    string session_id = 1;
+    string source = 2;
+    string read_parameters = 3;
+    uint64 begin_time = 4;
+    uint64 end_time = 5;
+}
+
+message ReadResponse {
+    string result = 1;  // empty string means successfully completed
+    string payload = 2;
 }

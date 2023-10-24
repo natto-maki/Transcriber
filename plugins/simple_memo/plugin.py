@@ -157,6 +157,9 @@ class _SimpleMemo(pl.Plugin):
         f_history = gr.HTML(value=self.__get_history, every=2)
         f_clear.click(self.__clear_history, None, [f_history])
 
+    def read_state(self, read_parameters: str) -> str:
+        return "parameter = " + read_parameters
+
 
 def create(**kwargs):
     return _SimpleMemo(**kwargs)

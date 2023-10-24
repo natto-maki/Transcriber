@@ -13,7 +13,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x19main_server_service.proto\"\x1e\n\x0c\x42\x61seResponse\x12\x0e\n\x06result\x18\x01 \x01(\t\"!\n\x0bOpenRequest\x12\x12\n\nsession_id\x18\x01 \x01(\t\"\"\n\x0c\x43loseRequest\x12\x12\n\nsession_id\x18\x01 \x01(\t\"5\n\x0bPushRequest\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\x12\n\naudio_data\x18\x02 \x01(\x0c\x32\x8a\x01\n\x11MainServerService\x12%\n\x04Open\x12\x0c.OpenRequest\x1a\r.BaseResponse\"\x00\x12\'\n\x05\x43lose\x12\r.CloseRequest\x1a\r.BaseResponse\"\x00\x12%\n\x04Push\x12\x0c.PushRequest\x1a\r.BaseResponse\"\x00\x62\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x19main_server_service.proto\"\x1e\n\x0c\x42\x61seResponse\x12\x0e\n\x06result\x18\x01 \x01(\t\"!\n\x0bOpenRequest\x12\x12\n\nsession_id\x18\x01 \x01(\t\"\"\n\x0c\x43loseRequest\x12\x12\n\nsession_id\x18\x01 \x01(\t\"5\n\x0bPushRequest\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\x12\n\naudio_data\x18\x02 \x01(\x0c\"p\n\x0bReadRequest\x12\x12\n\nsession_id\x18\x01 \x01(\t\x12\x0e\n\x06source\x18\x02 \x01(\t\x12\x17\n\x0fread_parameters\x18\x03 \x01(\t\x12\x12\n\nbegin_time\x18\x04 \x01(\x04\x12\x10\n\x08\x65nd_time\x18\x05 \x01(\x04\"/\n\x0cReadResponse\x12\x0e\n\x06result\x18\x01 \x01(\t\x12\x0f\n\x07payload\x18\x02 \x01(\t2\xb1\x01\n\x11MainServerService\x12%\n\x04Open\x12\x0c.OpenRequest\x1a\r.BaseResponse\"\x00\x12\'\n\x05\x43lose\x12\r.CloseRequest\x1a\r.BaseResponse\"\x00\x12%\n\x04Push\x12\x0c.PushRequest\x1a\r.BaseResponse\"\x00\x12%\n\x04Read\x12\x0c.ReadRequest\x1a\r.ReadResponse\"\x00\x62\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -29,6 +29,10 @@ if _descriptor._USE_C_DESCRIPTORS == False:
   _globals['_CLOSEREQUEST']._serialized_end=130
   _globals['_PUSHREQUEST']._serialized_start=132
   _globals['_PUSHREQUEST']._serialized_end=185
-  _globals['_MAINSERVERSERVICE']._serialized_start=188
-  _globals['_MAINSERVERSERVICE']._serialized_end=326
+  _globals['_READREQUEST']._serialized_start=187
+  _globals['_READREQUEST']._serialized_end=299
+  _globals['_READRESPONSE']._serialized_start=301
+  _globals['_READRESPONSE']._serialized_end=348
+  _globals['_MAINSERVERSERVICE']._serialized_start=351
+  _globals['_MAINSERVERSERVICE']._serialized_end=528
 # @@protoc_insertion_point(module_scope)

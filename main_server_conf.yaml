@@ -1,7 +1,6 @@
 !!python/object:main.Configuration
 device: cpu
-disabled_plugins:
-- simple_memo
+disabled_plugins: []
 emb_pn: !!python/object:main.EmbeddingDatabaseConfiguration
   dbscan_eps: 0.35
   dbscan_min_samples: 6

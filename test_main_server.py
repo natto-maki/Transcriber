@@ -2,6 +2,7 @@ import argparse
 import logging
 import random
 import time
+import json
 
 # noinspection PyPackageRequirements
 import grpc
@@ -55,7 +56,21 @@ def main():
         if tm_current < tm1:
             time.sleep(tm1 - tm_current)
 
-    time.sleep(10)
+    for _ in range(4):
+        r0 = stub.Read(main_server_service_pb2.ReadRequest(
+            session_id=session_id, begin_time=0, end_time=0))
+        if r0.result != "":
+            raise Exception("status_code = " + r0.result)
+        j = json.loads(r0.payload)
+        if len(j) != 0:
+            logging.info("sentences: \n" + "\n".join([json.dumps(je, ensure_ascii=False) for je in j]))
+        time.sleep(3)
+
+    r0 = stub.Read(main_server_service_pb2.ReadRequest(
+            session_id=session_id, source="simple_memo", read_parameters="foo"))
+    if r0.result != "":
+        raise Exception("status_code = " + r0.result)
+    logging.info("result: " + r0.payload)
 
     r0 = stub.Close(main_server_service_pb2.CloseRequest(session_id=session_id))
     if r0.result != "":

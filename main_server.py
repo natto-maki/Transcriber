@@ -5,6 +5,7 @@ import threading as th
 import concurrent.futures
 from collections import deque
 import dataclasses
+import json
 
 # noinspection PyPackageRequirements
 import grpc
@@ -130,6 +131,27 @@ class Servicer(main_server_service_pb2_grpc.MainServerServiceServicer):
     def __push(s: Session, audio_frame: np.ndarray):
         s.audio_input.push(audio_frame)
 
+    @staticmethod
+    def __read(s: Session, source: str, read_parameters: str, begin_time: int, end_time: int):
+        if source == "":
+            ret = []
+            for group_index in range(s.app.group_count()):
+                g = s.app.ref_group(group_index)
+                sentences = g.sentences
+                if g.qualified is not None and g.qualified.corrected_sentences is not None:
+                    sentences = g.qualified.corrected_sentences
+                for s in sentences:
+                    if begin_time <= s.tm0 and (end_time == 0 or s.tm0 < end_time):
+                        ret.append({"time": s.tm0, "text": s.text, "name": s.person_name})
+            return json.dumps(ret)
+
+        else:
+            plugins = s.app.ref_plugins()
+            if source in plugins:
+                return plugins[source].read_state(read_parameters)
+
+        return ""
+
     def __check_session(self, session_id: str, blocking=False) -> Session:
         with self.__lock0:
             if session_id in self.__sessions:
@@ -161,6 +183,20 @@ class Servicer(main_server_service_pb2_grpc.MainServerServiceServicer):
         s = self.__check_session(request.session_id)
         s.app_thread.submit(self.__push, s, np.frombuffer(request.audio_data, dtype=np.float32))
         return main_server_service_pb2.BaseResponse(result="")
+
+    def Read(self, request, context):
+        s = self.__check_session(request.session_id)
+        sm = th.Semaphore(0)
+        ret = main_server_service_pb2.ReadResponse()
+
+        def _handle_read():
+            ret.payload = self.__read(s, request.source, request.read_parameters, request.begin_time, request.end_time)
+            ret.result = ""
+            sm.release()
+
+        s.app_thread.submit(_handle_read)
+        sm.acquire()
+        return ret
 
 
 def serve():

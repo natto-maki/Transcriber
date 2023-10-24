@@ -106,3 +106,13 @@ class Plugin:
         required FLAG_ADD_TAB
         """
         pass
+
+    def read_state(self, read_parameters: str) -> str:
+        """
+        Reads the status of this plugin.
+        Used for debugging purposes and to retrieve the processing results by this plugin
+        when the application is running in server mode.
+
+        :return: Any text
+        """
+        return ""

@@ -29,3 +29,25 @@ class PushRequest(_message.Message):
     session_id: str
     audio_data: bytes
     def __init__(self, session_id: _Optional[str] = ..., audio_data: _Optional[bytes] = ...) -> None: ...
+
+class ReadRequest(_message.Message):
+    __slots__ = ["session_id", "source", "read_parameters", "begin_time", "end_time"]
+    SESSION_ID_FIELD_NUMBER: _ClassVar[int]
+    SOURCE_FIELD_NUMBER: _ClassVar[int]
+    READ_PARAMETERS_FIELD_NUMBER: _ClassVar[int]
+    BEGIN_TIME_FIELD_NUMBER: _ClassVar[int]
+    END_TIME_FIELD_NUMBER: _ClassVar[int]
+    session_id: str
+    source: str
+    read_parameters: str
+    begin_time: int
+    end_time: int
+    def __init__(self, session_id: _Optional[str] = ..., source: _Optional[str] = ..., read_parameters: _Optional[str] = ..., begin_time: _Optional[int] = ..., end_time: _Optional[int] = ...) -> None: ...
+
+class ReadResponse(_message.Message):
+    __slots__ = ["result", "payload"]
+    RESULT_FIELD_NUMBER: _ClassVar[int]
+    PAYLOAD_FIELD_NUMBER: _ClassVar[int]
+    result: str
+    payload: str
+    def __init__(self, result: _Optional[str] = ..., payload: _Optional[str] = ...) -> None: ...

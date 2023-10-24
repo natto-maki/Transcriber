@@ -29,6 +29,11 @@ class MainServerServiceStub(object):
                 request_serializer=main__server__service__pb2.PushRequest.SerializeToString,
                 response_deserializer=main__server__service__pb2.BaseResponse.FromString,
                 )
+        self.Read = channel.unary_unary(
+                '/MainServerService/Read',
+                request_serializer=main__server__service__pb2.ReadRequest.SerializeToString,
+                response_deserializer=main__server__service__pb2.ReadResponse.FromString,
+                )
 
 
 class MainServerServiceServicer(object):
@@ -52,6 +57,12 @@ class MainServerServiceServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def Read(self, request, context):
+        """Missing associated documentation comment in .proto file."""
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_MainServerServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -69,6 +80,11 @@ def add_MainServerServiceServicer_to_server(servicer, server):
                     servicer.Push,
                     request_deserializer=main__server__service__pb2.PushRequest.FromString,
                     response_serializer=main__server__service__pb2.BaseResponse.SerializeToString,
+            ),
+            'Read': grpc.unary_unary_rpc_method_handler(
+                    servicer.Read,
+                    request_deserializer=main__server__service__pb2.ReadRequest.FromString,
+                    response_serializer=main__server__service__pb2.ReadResponse.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -128,5 +144,22 @@ class MainServerService(object):
         return grpc.experimental.unary_unary(request, target, '/MainServerService/Push',
             main__server__service__pb2.PushRequest.SerializeToString,
             main__server__service__pb2.BaseResponse.FromString,
+            options, channel_credentials,
+            insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
+
+    @staticmethod
+    def Read(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(request, target, '/MainServerService/Read',
+            main__server__service__pb2.ReadRequest.SerializeToString,
+            main__server__service__pb2.ReadResponse.FromString,
             options, channel_credentials,
             insecure, call_credentials, compression, wait_for_ready, timeout, metadata)
