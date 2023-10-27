@@ -52,4 +52,6 @@ RUN cd /root/Transcriber && pip3 install -r requirements.txt
 RUN apt install -y cmake clang lldb lld wget
 RUN CUDACXX=/usr/local/cuda/bin/nvcc CMAKE_ARGS="-DLLAMA_CUBLAS=on" FORCE_CMAKE=1 pip3 install llama-cpp-python
 
+ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib
+
 EXPOSE 7860

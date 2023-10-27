@@ -1,5 +1,5 @@
 !!python/object:main.Configuration
-device: cpu
+device: gpu
 disabled_plugins: []
 emb_pn: !!python/object:main.EmbeddingDatabaseConfiguration
   dbscan_eps: 0.35
@@ -11,7 +11,7 @@ emb_pn: !!python/object:main.EmbeddingDatabaseConfiguration
   preferred_cluster_size: 100
   preferred_cluster_size_scale: 0.75
   preferred_person_size: 100
-  threshold: 0.6
+  threshold: 0.5
 emb_sb: !!python/object:main.EmbeddingDatabaseConfiguration
   dbscan_eps: 0.35
   dbscan_min_samples: 6
@@ -22,7 +22,7 @@ emb_sb: !!python/object:main.EmbeddingDatabaseConfiguration
   preferred_cluster_size: 100
   preferred_cluster_size_scale: 0.75
   preferred_person_size: 100
-  threshold: 0.6
+  threshold: 0.5
 embedding_type: null
 enable_auto_detect_language: false
 enable_simultaneous_interpretation: false

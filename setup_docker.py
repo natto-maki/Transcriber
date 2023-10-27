@@ -5,7 +5,7 @@ import logging
 import subprocess
 
 
-_image_version = "0.3.0"
+_image_version = "0.3.1"
 
 _command_template = {
     ".cpu": {
@@ -14,9 +14,10 @@ _command_template = {
             "docker build --progress tty -t transcriber/cpu:%(image_version)s -f docker/Dockerfile.cpu "
             "--build-arg branch=%(branch)s .",
         "run":
-            "docker run -it -p%(port)s:7860 "
+            "docker run -it %(run_opt0)s -p%(port)s:7860 "
             "--device /dev/snd:/dev/snd "
-            "--name %(name)s transcriber/cpu:%(image_version)s /bin/sh -c 'cd ~/Transcriber; python3 app.py'"
+            "--name %(name)s transcriber/cpu:%(image_version)s "
+            "/bin/sh -c 'cd ~/Transcriber; python3 app.py'"
     },
     ".linux_gpu": {
         "image": "transcriber/linux_gpu:%(image_version)s",
@@ -24,9 +25,15 @@ _command_template = {
             "docker build --progress tty -t transcriber/linux_gpu:%(image_version)s -f docker/Dockerfile.linux_gpu "
             "--build-arg branch=%(branch)s .",
         "run":
-            "docker run -it --gpus %(gpus)s --shm-size=%(shm_size)s -p%(port)s:7860 "
+            "docker run -it %(run_opt0)s --gpus %(gpus)s --shm-size=%(shm_size)s -p%(port)s:7860 "
             "--device /dev/snd:/dev/snd "
-            "--name %(name)s transcriber/linux_gpu:%(image_version)s /bin/sh -c 'cd ~/Transcriber; python3 app.py'"
+            "--name %(name)s transcriber/linux_gpu:%(image_version)s "
+            "/bin/sh -c 'cd ~/Transcriber; python3 app.py'",
+        "run_server":
+            "docker run -it %(run_opt0)s --gpus %(gpus)s --shm-size=%(shm_size)s -p%(port)s:7860 "
+            "--device /dev/snd:/dev/snd "
+            "--name %(name)s transcriber/linux_gpu:%(image_version)s "
+            "/bin/sh -c 'cd ~/Transcriber; python3 main_server.py'"
     },
     ".cpu.inplace": {
         "image": "transcriber/cpu.inplace:%(image_version)s",
@@ -35,20 +42,28 @@ _command_template = {
             "--build-arg USER_NAME=$(id -un) --build-arg GROUP_NAME=$(id -gn) "
             "--build-arg UID=$(id -u) --build-arg GID=$(id -g) .",
         "run":
-            "docker run -it --rm -p%(port)s:7860 "
+            "docker run -it --rm %(run_opt0)s -p%(port)s:7860 "
             "--device /dev/snd:/dev/snd -v .:/home/$(id -un) -u $(id -u):$(id -g) --group-add=audio "
-            "--name %(name)s transcriber/cpu.inplace:%(image_version)s /bin/sh -c 'python3 app.py'"
+            "--name %(name)s transcriber/cpu.inplace:%(image_version)s "
+            "/bin/sh -c 'python3 app.py'"
     },
     ".linux_gpu.inplace": {
         "image": "transcriber/linux_gpu.inplace:%(image_version)s",
         "build":
-            "docker build --progress tty -t transcriber/linux_gpu.inplace:%(image_version)s -f docker/Dockerfile.linux_gpu.inplace "
+            "docker build --progress tty -t transcriber/linux_gpu.inplace:%(image_version)s "
+            "-f docker/Dockerfile.linux_gpu.inplace "
             "--build-arg USER_NAME=$(id -un) --build-arg GROUP_NAME=$(id -gn) "
             "--build-arg UID=$(id -u) --build-arg GID=$(id -g) .",
         "run":
-            "docker run -it --rm --gpus %(gpus)s --shm-size=%(shm_size)s -p%(port)s:7860 "
+            "docker run -it --rm %(run_opt0)s --gpus %(gpus)s --shm-size=%(shm_size)s -p%(port)s:7860 "
             "--device /dev/snd:/dev/snd -v .:/home/$(id -un) -u $(id -u):$(id -g) --group-add=audio "
-            "--name %(name)s transcriber/linux_gpu.inplace:%(image_version)s /bin/sh -c 'python3 app.py'"
+            "--name %(name)s transcriber/linux_gpu.inplace:%(image_version)s "
+            "/bin/sh -c 'python3 app.py'",
+        "run_server":
+            "docker run -it --rm %(run_opt0)s --gpus %(gpus)s --shm-size=%(shm_size)s -p%(port)s:7860 "
+            "--device /dev/snd:/dev/snd -v .:/home/$(id -un) -u $(id -u):$(id -g) --group-add=audio "
+            "--name %(name)s transcriber/linux_gpu.inplace:%(image_version)s "
+            "/bin/sh -c 'python3 main_server.py'"
     }
 }
 
@@ -81,6 +96,12 @@ def main():
     parser.add_argument(
         "--run", help="launch docker container (only build image if not specified)",
         action="store_true", dest="run")
+    parser.add_argument(
+        "--run-server", help="launch docker container (only build image if not specified) in server mode",
+        action="store_true", dest="run_server")
+    parser.add_argument(
+        "--detach", help="run container in background",
+        action="store_true", dest="run_opt_detach")
 
     gr_docker = parser.add_argument_group("Docker build/run options")
     gr_docker.add_argument("--gpus", metavar="GPU", action="store", dest="docker_gpus", default="device=0")
@@ -142,6 +163,9 @@ def main():
     logging.info("selected Dockerfile: docker/Dockerfile%s" % suffix)
 
     # Run docker commands
+    run_opt0 = []
+    if opt.run_opt_detach:
+        run_opt0.append("--detach")
     kwargs = {
         "image_version": _image_version,
         "branch": branch,
@@ -149,10 +173,11 @@ def main():
         "shm_size": opt.docker_shm_size,
         "port": opt.docker_port,
         "name": opt.docker_name,
+        "run_opt0": " ".join(run_opt0)
     }
 
     build_targets = [suffix] if not opt.build_all else list(_command_template.keys())
-    run_targets = [suffix] if opt.run else []
+    run_targets = [suffix] if opt.run or opt.run_server else []
 
     # Build
     for target in build_targets:
@@ -169,7 +194,11 @@ def main():
 
     # Run
     for target in run_targets:
-        cmd = _command_template[target]["run"] % kwargs
+        key = "run" if opt.run else "run_server" if opt.run_server else ""
+        if key not in _command_template[target]:
+            logging.error("It is not possible to launch docker containers with the specified combination")
+            continue
+        cmd = _command_template[target][key] % kwargs
         logging.info(cmd)
         _docker_command(cmd)
 

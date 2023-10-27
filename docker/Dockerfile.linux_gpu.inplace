@@ -62,4 +62,6 @@ RUN groupadd -g $GID $GROUP_NAME && \
 USER $USER_NAME
 WORKDIR /home/$USER_NAME/
 
+ENV LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/usr/local/lib/python3.11/site-packages/nvidia/cudnn/lib
+
 EXPOSE 7860
