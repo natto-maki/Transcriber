@@ -56,14 +56,16 @@ def main():
         if tm_current < tm1:
             time.sleep(tm1 - tm_current)
 
+    last_read = 0
     for _ in range(4):
         r0 = stub.Read(main_server_service_pb2.ReadRequest(
-            session_id=session_id, begin_time=0, end_time=0))
+            session_id=session_id, begin_time=last_read, end_time=0))
         if r0.result != "":
             raise Exception("status_code = " + r0.result)
         j = json.loads(r0.payload)
         if len(j) != 0:
             logging.info("sentences: \n" + "\n".join([json.dumps(je, ensure_ascii=False) for je in j]))
+            last_read = j[-1]["time"] + 0.001
         time.sleep(3)
 
     r0 = stub.Read(main_server_service_pb2.ReadRequest(

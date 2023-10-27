@@ -1217,6 +1217,8 @@ class Application:
 
         self.__sync_stop: th.Semaphore | None = None
         self.__sync_thread = None
+
+        self.__lock_open_state = th.Lock()
         self.__opened = False
 
         # Generate a file where the status is saved if it was the first run of the day
@@ -1326,26 +1328,29 @@ class Application:
         return self.__plugins
 
     def open(self):
-        self.__qualifier.open()
+        with self.__lock_open_state:
+            self.__qualifier.open()
 
-        self.__sync_stop = th.Semaphore(0)
-        self.__sync_thread = th.Thread(target=self.__interval_sync)
-        self.__sync_thread.start()
+            self.__sync_stop = th.Semaphore(0)
+            self.__sync_thread = th.Thread(target=self.__interval_sync)
+            self.__sync_thread.start()
 
-        self.__opened = True
+            self.__opened = True
 
     def close(self):
-        self.__opened = False
+        with self.__lock_open_state:
+            self.__opened = False
 
-        self.__sync_stop.release()
-        self.__sync_thread.join()
-        self.__sync_thread = None
+            self.__sync_stop.release()
+            self.__sync_thread.join()
+            self.__sync_thread = None
 
-        self.__qualifier.close()
-        self.__sync()
+            self.__qualifier.close()
+            self.__sync()
 
     def is_opened(self):
-        return self.__opened
+        with self.__lock_open_state:
+            return self.__opened
 
     def __enter__(self):
         self.open()

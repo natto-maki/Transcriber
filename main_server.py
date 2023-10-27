@@ -106,33 +106,8 @@ class Servicer(main_server_service_pb2_grpc.MainServerServiceServicer):
             with open(conf_file_name, mode="r") as f:
                 self.__conf = yaml.load(f, Loader=yaml.Loader)
 
-    def __start_app(self, s: Session, sm: th.Semaphore | None):
-        logging.info(s.session_id + ": attempting to open app")
-
-        s.app = main.Application(
-            conf=self.__conf, audio_input=s.audio_input, data_dir_name=os.path.join("data", s.session_id))
-
-        # with open(conf_file_name, mode="w") as f:
-        #     yaml.dump(s.app.get_current_configuration(), f)
-
-        s.app.open()
-        logging.info(s.session_id + ": app opened")
-        if sm is not None:
-            sm.release()
-
     @staticmethod
-    def __stop_app(s: Session):
-        logging.info(s.session_id + ": attempting to close app")
-        if s.app.is_opened():
-            s.app.close()
-        logging.info(s.session_id + ": app closed")
-
-    @staticmethod
-    def __push(s: Session, audio_frame: np.ndarray):
-        s.audio_input.push(audio_frame)
-
-    @staticmethod
-    def __read(s: Session, source: str, read_parameters: str, begin_time: int, end_time: int):
+    def __read(s: Session, source: str, read_parameters: str, begin_time: float, end_time: float):
         if source == "":
             ret = []
             for group_index in range(s.app.group_count()):
@@ -152,50 +127,109 @@ class Servicer(main_server_service_pb2_grpc.MainServerServiceServicer):
 
         return ""
 
+    @staticmethod
+    def __wait_completion_handler(sm: th.Semaphore):
+        sm.release()
+
+    @staticmethod
+    def __wait_completion(s: Session):
+        sm = th.Semaphore(0)
+        s.app_thread.submit(Servicer.__wait_completion_handler, sm)
+        sm.acquire()
+
+    @staticmethod
+    def __garbage_collection_close_handler(s: Session):
+        if s.app.is_opened():
+            logging.info(s.session_id + ": app closed by garbage collector")
+            s.app.close()
+
+    def __garbage_collection(self):
+        tm_current = time.time()
+        with self.__lock0:
+            for session_id, s in self.__sessions.items():
+                if s.app.is_opened() and s.last_access + 300.0 < tm_current:
+                    s.app_thread.submit(self.__garbage_collection_close_handler, s)
+                if s.last_access + 3600.0 < tm_current:
+                    logging.info(s.session_id + ": session destroyed")
+                    with self.__lock0:
+                        del self.__sessions[session_id]
+
+    def __check_session_handler(self, s: Session):
+        if s.app is None:
+            logging.info(s.session_id + ": session created")
+            s.app = main.Application(
+                conf=self.__conf, audio_input=s.audio_input, data_dir_name=os.path.join("data", s.session_id))
+
     def __check_session(self, session_id: str, blocking=False) -> Session:
         with self.__lock0:
             if session_id in self.__sessions:
-                return self.__sessions[session_id]
+                s = self.__sessions[session_id]
+                s.last_access = time.time()
+                return s
+
             s = Session(session_id)
             s.audio_input = RemoteAudioInput()
             s.app_thread = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+            s.last_access = time.time()
+
+            s.app_thread.submit(self.__check_session_handler, s)
             self.__sessions[session_id] = s
 
-        sm = th.Semaphore(0) if blocking else None
-        s.app_thread.submit(self.__start_app, s, sm)
-        if sm is not None:
-            sm.acquire()
+        if blocking:
+            self.__wait_completion(s)
         return s
 
+    @staticmethod
+    def __open_handler(s: Session):
+        if not s.app.is_opened():
+            logging.info(s.session_id + ": app opened")
+            s.app.open()
+
     def Open(self, request, context):
-        self.__check_session(request.session_id, blocking=True)
+        self.__garbage_collection()
+        s = self.__check_session(request.session_id, blocking=True)
+        s.app_thread.submit(self.__open_handler, s)
         return main_server_service_pb2.BaseResponse(result="")
+
+    @staticmethod
+    def __close_handler(s: Session):
+        if s.app.is_opened():
+            logging.info(s.session_id + ": app closed")
+            s.app.close()
 
     def Close(self, request, context):
         with self.__lock0:
-            if request.session_id in self.__sessions:
-                s = self.__sessions[request.session_id]
-                s.app_thread.submit(self.__stop_app, s)
-                del self.__sessions[request.session_id]
+            if request.session_id not in self.__sessions:
+                return main_server_service_pb2.BaseResponse(result="")
+        s = self.__check_session(request.session_id)
+        s.app_thread.submit(self.__close_handler, s)
         return main_server_service_pb2.BaseResponse(result="")
+
+    @staticmethod
+    def __push_handler(s: Session, audio_frame: np.ndarray):
+        if not s.app.is_opened():
+            s.app.open()
+        s.audio_input.push(audio_frame)
 
     def Push(self, request, context):
         s = self.__check_session(request.session_id)
-        s.app_thread.submit(self.__push, s, np.frombuffer(request.audio_data, dtype=np.float32))
+        s.app_thread.submit(self.__push_handler, s, np.frombuffer(request.audio_data, dtype=np.float32))
         return main_server_service_pb2.BaseResponse(result="")
 
+    def __read_handler(self, s: Session, source: str, read_parameters: str, begin_time: int, end_time: int, ret):
+        logging.info(s.session_id + ": read request to %s, param = %s" % (
+            source, json.dumps(read_parameters, ensure_ascii=False)))
+        ret.payload = self.__read(s, source, read_parameters, begin_time, end_time)
+        ret.result = ""
+
     def Read(self, request, context):
+        self.__garbage_collection()
         s = self.__check_session(request.session_id)
-        sm = th.Semaphore(0)
         ret = main_server_service_pb2.ReadResponse()
-
-        def _handle_read():
-            ret.payload = self.__read(s, request.source, request.read_parameters, request.begin_time, request.end_time)
-            ret.result = ""
-            sm.release()
-
-        s.app_thread.submit(_handle_read)
-        sm.acquire()
+        s.app_thread.submit(
+            self.__read_handler, s, request.source, request.read_parameters, request.begin_time, request.end_time,
+            ret)
+        self.__wait_completion(s)
         return ret
 
 

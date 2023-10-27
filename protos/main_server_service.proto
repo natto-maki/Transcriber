@@ -30,8 +30,8 @@ message ReadRequest {
     string session_id = 1;
     string source = 2;
     string read_parameters = 3;
-    uint64 begin_time = 4;
-    uint64 end_time = 5;
+    double begin_time = 4;
+    double end_time = 5;
 }
 
 message ReadResponse {

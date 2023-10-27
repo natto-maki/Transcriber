@@ -40,9 +40,9 @@ class ReadRequest(_message.Message):
     session_id: str
     source: str
     read_parameters: str
-    begin_time: int
-    end_time: int
-    def __init__(self, session_id: _Optional[str] = ..., source: _Optional[str] = ..., read_parameters: _Optional[str] = ..., begin_time: _Optional[int] = ..., end_time: _Optional[int] = ...) -> None: ...
+    begin_time: float
+    end_time: float
+    def __init__(self, session_id: _Optional[str] = ..., source: _Optional[str] = ..., read_parameters: _Optional[str] = ..., begin_time: _Optional[float] = ..., end_time: _Optional[float] = ...) -> None: ...
 
 class ReadResponse(_message.Message):
     __slots__ = ["result", "payload"]
