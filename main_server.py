@@ -151,8 +151,7 @@ class Servicer(main_server_service_pb2_grpc.MainServerServiceServicer):
                     s.app_thread.submit(self.__garbage_collection_close_handler, s)
                 if s.last_access + 3600.0 < tm_current:
                     logging.info(s.session_id + ": session destroyed")
-                    with self.__lock0:
-                        del self.__sessions[session_id]
+                    del self.__sessions[session_id]
 
     def __check_session_handler(self, s: Session):
         if s.app is None:
