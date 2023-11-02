@@ -24,6 +24,8 @@ message CloseRequest {
 message PushRequest {
     string session_id = 1;
     bytes audio_data = 2;
+    sint32 audio_samples_scale = 3;
+    repeated sint32 audio_samples = 4;
 }
 
 message ReadRequest {

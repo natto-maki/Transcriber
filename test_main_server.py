@@ -9,6 +9,7 @@ import grpc
 import main_server_service_pb2
 import main_server_service_pb2_grpc
 
+import numpy as np
 import soundfile as sf
 
 sampling_rate = 16000
@@ -45,8 +46,12 @@ def main():
     offset = 0
     while offset < len(audio_data):
         length = min(frame_size, len(audio_data) - offset)
+        # r0 = stub.Push(main_server_service_pb2.PushRequest(
+        #     session_id=session_id, audio_data=audio_data[offset:offset + length].tobytes()))
         r0 = stub.Push(main_server_service_pb2.PushRequest(
-            session_id=session_id, audio_data=audio_data[offset:offset + length].tobytes()))
+            session_id=session_id,
+            audio_samples_scale=32768,
+            audio_samples=(audio_data[offset:offset + length] * 32768).astype(np.int32).tolist()))
         if r0.result != "":
             raise Exception("status_code = " + r0.result)
 

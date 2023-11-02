@@ -1,6 +1,7 @@
+from google.protobuf.internal import containers as _containers
 from google.protobuf import descriptor as _descriptor
 from google.protobuf import message as _message
-from typing import ClassVar as _ClassVar, Optional as _Optional
+from typing import ClassVar as _ClassVar, Iterable as _Iterable, Optional as _Optional
 
 DESCRIPTOR: _descriptor.FileDescriptor
 
@@ -23,12 +24,16 @@ class CloseRequest(_message.Message):
     def __init__(self, session_id: _Optional[str] = ...) -> None: ...
 
 class PushRequest(_message.Message):
-    __slots__ = ["session_id", "audio_data"]
+    __slots__ = ["session_id", "audio_data", "audio_samples_scale", "audio_samples"]
     SESSION_ID_FIELD_NUMBER: _ClassVar[int]
     AUDIO_DATA_FIELD_NUMBER: _ClassVar[int]
+    AUDIO_SAMPLES_SCALE_FIELD_NUMBER: _ClassVar[int]
+    AUDIO_SAMPLES_FIELD_NUMBER: _ClassVar[int]
     session_id: str
     audio_data: bytes
-    def __init__(self, session_id: _Optional[str] = ..., audio_data: _Optional[bytes] = ...) -> None: ...
+    audio_samples_scale: int
+    audio_samples: _containers.RepeatedScalarFieldContainer[int]
+    def __init__(self, session_id: _Optional[str] = ..., audio_data: _Optional[bytes] = ..., audio_samples_scale: _Optional[int] = ..., audio_samples: _Optional[_Iterable[int]] = ...) -> None: ...
 
 class ReadRequest(_message.Message):
     __slots__ = ["session_id", "source", "read_parameters", "begin_time", "end_time"]

@@ -212,7 +212,13 @@ class Servicer(main_server_service_pb2_grpc.MainServerServiceServicer):
 
     def Push(self, request, context):
         s = self.__check_session(request.session_id)
-        s.app_thread.submit(self.__push_handler, s, np.frombuffer(request.audio_data, dtype=np.float32))
+        if len(request.audio_data) != 0:
+            audio_data = np.frombuffer(request.audio_data, dtype=np.float32)
+        elif request.audio_samples_scale != 0 and len(request.audio_samples) != 0:
+            audio_data = np.array(request.audio_samples, dtype=np.float32) / request.audio_samples_scale
+        else:
+            raise ValueError()
+        s.app_thread.submit(self.__push_handler, s, audio_data)
         return main_server_service_pb2.BaseResponse(result="")
 
     def __read_handler(self, s: Session, source: str, read_parameters: str, begin_time: int, end_time: int, ret):
