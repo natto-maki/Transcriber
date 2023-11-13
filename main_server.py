@@ -146,12 +146,15 @@ class Servicer(main_server_service_pb2_grpc.MainServerServiceServicer):
     def __garbage_collection(self):
         tm_current = time.time()
         with self.__lock0:
+            session_id_to_remove = []
             for session_id, s in self.__sessions.items():
                 if s.app.is_opened() and s.last_access + 300.0 < tm_current:
                     s.app_thread.submit(self.__garbage_collection_close_handler, s)
                 if s.last_access + 3600.0 < tm_current:
-                    logging.info(s.session_id + ": session destroyed")
-                    del self.__sessions[session_id]
+                    session_id_to_remove.append(session_id)
+            for session_id in session_id_to_remove:
+                logging.info(session_id + ": session destroyed")
+                del self.__sessions[session_id]
 
     def __check_session_handler(self, s: Session):
         if s.app is None:
